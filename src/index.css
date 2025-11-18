@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+  }
+
+  html {
+    background-color: #050505; /* container-L0 */
+  }
+
+  body {
+    font-family: 'Rubik', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #0e0e0f; /* container-L1 */
+    color: #cacad6; /* text-high */
+  }
+
+  #root {
+    background-color: #0e0e0f; /* container-L1 */
+  }
+}
