@@ -43,6 +43,8 @@ export function WayfinderConfigProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Exported hook - separated to satisfy fast-refresh requirements
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWayfinderConfig() {
   const context = useContext(WayfinderConfigContext);
   if (!context) {

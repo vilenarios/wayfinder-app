@@ -5,7 +5,6 @@ import {
   TrustedPeersGatewaysProvider,
   SimpleCacheGatewaysProvider,
   PreferredWithFallbackRoutingStrategy,
-  FastestPingRoutingStrategy,
   type RoutingOption,
 } from '@ar.io/wayfinder-core';
 import { WayfinderConfigProvider, useWayfinderConfig } from './context/WayfinderConfigContext';
@@ -32,6 +31,7 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
         // Shuffle the gateways array using Fisher-Yates algorithm
         const shuffled = [...allGateways];
         for (let i = shuffled.length - 1; i > 0; i--) {
+          // eslint-disable-next-line react-hooks/purity
           const j = Math.floor(Math.random() * (i + 1));
           [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
@@ -101,12 +101,15 @@ function AppContent() {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [shouldAutoOpenInNewTab, setShouldAutoOpenInNewTab] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [searchCounter, setSearchCounter] = useState(0);
 
   // On mount, check URL for search query and auto-execute
   useEffect(() => {
+    // Initialize from URL query parameter - this is the correct pattern for URL-based initialization
     const params = new URLSearchParams(window.location.search);
     const query = params.get('q');
     if (query && query.trim()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchInput(query.trim());
       setIsSearched(true);
     }
@@ -133,6 +136,7 @@ function AppContent() {
     setIsSearched(true);
     setIsCollapsed(false); // Expand when doing a new search
     setShouldAutoOpenInNewTab(false); // Reset flag
+    setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
     // Update URL with search query
     const url = new URL(window.location.href);
@@ -141,11 +145,8 @@ function AppContent() {
   }, []);
 
   const handleRetry = useCallback(() => {
-    // Force re-render by clearing and resetting the input
-    setSearchInput((current) => {
-      setTimeout(() => setSearchInput(current), 0);
-      return '';
-    });
+    // Force re-fetch with a different gateway by incrementing counter
+    setSearchCounter((prev) => prev + 1);
   }, []);
 
   const handleOpenInNewTab = useCallback(() => {
@@ -167,6 +168,7 @@ function AppContent() {
     setIsSearched(true);
     setIsCollapsed(false);
     setShouldAutoOpenInNewTab(true); // Set flag to auto-open
+    setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
     // Update URL with search query
     const url = new URL(window.location.href);
@@ -182,7 +184,9 @@ function AppContent() {
   useEffect(() => {
     if (shouldAutoOpenInNewTab && resolvedUrl) {
       window.open(resolvedUrl, '_blank', 'noopener,noreferrer');
-      setShouldAutoOpenInNewTab(false); // Reset flag
+      // Reset flag after opening - this is intentional side effect management
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShouldAutoOpenInNewTab(false);
     }
   }, [shouldAutoOpenInNewTab, resolvedUrl]);
 
@@ -204,7 +208,7 @@ function AppContent() {
       {isSearched && searchInput && (
         <div className="flex-1 overflow-hidden" key="content-viewer-container">
           <ContentViewer
-            key={searchInput}
+            key={`${searchInput}-${searchCounter}`}
             input={searchInput}
             onRetry={handleRetry}
             onUrlResolved={handleUrlResolved}

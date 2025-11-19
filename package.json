@@ -21,9 +21,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ar.io/wayfinder-react": "^1.0.26",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@ar.io/wayfinder-react": "^1.0.26"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -13,6 +13,8 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
   const [localConfig, setLocalConfig] = useState<WayfinderConfig>(config);
 
   useEffect(() => {
+    // Sync local state with context when settings open or config changes
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalConfig(config);
   }, [config, isOpen]);
 
