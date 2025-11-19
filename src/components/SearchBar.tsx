@@ -148,7 +148,14 @@ export const SearchBar = memo(function SearchBar({
       <form onSubmit={handleSubmit} className={formClasses}>
         {!isSearched && (
           <div className="text-center mb-6 md:mb-8">
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 md:mb-3">Wayfinder</h1>
+            <div className="flex items-center justify-center gap-3 md:gap-4 mb-2 md:mb-3">
+              <img
+                src="/wayfinder-logo.svg"
+                alt="Wayfinder Logo"
+                className="w-12 h-12 md:w-16 md:h-16"
+              />
+              <h1 className="text-4xl md:text-5xl font-bold text-white">Wayfinder</h1>
+            </div>
             <p className="text-text-low text-base md:text-lg">
               Decentralized access to Arweave via AR.IO Network
             </p>

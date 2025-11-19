@@ -3,6 +3,125 @@
 @tailwind utilities;
 
 @layer base {
+  /* ==========================================================================
+     Wayfinder CSS Variables - Shared Design System
+     Matches extension design tokens from variables.css
+     ========================================================================== */
+
+  :root {
+    /* New Design System - Figma Design Tokens */
+    --colors-solid-neutrals-100: #ffffff;
+    --colors-text-textHigh: #cacad6;
+    --colors-text-textLow: #7f7f87;
+    --colors-container-containerL0: #050505;
+    --colors-container-containerL1: #0e0e0f;
+    --colors-container-containerL2: #1c1c1f;
+    --colors-container-containerL3: #2a2a2e;
+    --colors-icons-iconHigh: #cacad6;
+    --colors-icons-iconMid: #a3a3ad;
+    --colors-icons-iconLow: #7f7f87;
+    --colors-stroke-strokeLow: rgba(202, 202, 214, 0.08);
+    --colors-stroke-strokeHigh: rgba(202, 202, 214, 0.32);
+
+    /* Typography - From Figma Design System */
+    --font-family-rubik: "Rubik", sans-serif;
+    --font-family-inter: "Inter", sans-serif;
+
+    /* Paragraph styles */
+    --paragraph-large-bold-size: 17px;
+    --paragraph-large-bold-weight: 700;
+    --paragraph-large-bold-line-height: 1.5;
+
+    --paragraph-normal-regular-size: 14px;
+    --paragraph-normal-regular-weight: 400;
+    --paragraph-normal-regular-line-height: 1.4;
+
+    /* Heading styles */
+    --heading-h6-bold-size: 17px;
+    --heading-h6-bold-weight: 700;
+    --heading-h6-bold-line-height: 1.4;
+
+    /* Caption styles */
+    --caption-bold-size: 11px;
+    --caption-bold-weight: 700;
+    --caption-bold-line-height: 1.4;
+
+    /* Typography shortcuts */
+    --font-size-h1: var(--paragraph-large-bold-size);
+    --font-size-caption: var(--caption-bold-size);
+    --font-size-body: var(--paragraph-normal-regular-size);
+
+    /* Legacy variables - maintained for backward compatibility */
+    --bg-primary: var(--colors-container-containerL1);
+    --bg-secondary: var(--colors-container-containerL2);
+    --bg-tertiary: var(--colors-container-containerL3);
+    --bg-elevated: var(--colors-container-containerL3);
+
+    --text-primary: var(--colors-solid-neutrals-100);
+    --text-secondary: var(--colors-text-textHigh);
+    --text-muted: var(--colors-text-textLow);
+
+    /* AR.IO Brand Accent Colors */
+    --accent-primary: rgb(45, 211, 190); /* Teal primary */
+    --accent-secondary: rgb(13, 144, 133); /* Teal secondary */
+    --accent-tertiary: rgb(188, 18, 60); /* Red accent */
+
+    /* AR.IO Blue accent */
+    --accent-blue: rgb(0, 85, 254);
+    --accent-blue-light: rgb(106, 130, 252);
+
+    --border-subtle: var(--colors-stroke-strokeLow);
+    --border-default: rgba(255, 255, 255, 0.2);
+    --border-emphasis: var(--colors-stroke-strokeHigh);
+
+    /* Semantic colors aligned with AR.IO */
+    --success: rgba(211, 255, 202, 0.8);
+    --warning: rgb(252, 184, 35);
+    --error: rgb(242, 63, 93);
+    --info: rgb(106, 130, 252);
+
+    /* Enhanced shadow system from Figma */
+    --shadow-card:
+      0px 1726px 483px 0px rgba(0, 0, 0, 0.01),
+      0px 1105px 442px 0px rgba(0, 0, 0, 0.04),
+      0px 621px 373px 0px rgba(0, 0, 0, 0.15),
+      0px 276px 276px 0px rgba(0, 0, 0, 0.26),
+      0px 69px 152px 0px rgba(0, 0, 0, 0.29);
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+
+    /* Gradient system */
+    --gradient-primary: linear-gradient(135deg, #f7c3a1, #df9be8);
+    --gradient-teal: linear-gradient(135deg, #2dd3be, #0d9085);
+    --border-accent: #f7c3a1;
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-2xl: 48px;
+
+    /* Transition system */
+    --transition-fast: 0.2s ease;
+    --transition-base: 0.3s ease;
+    --transition-slow: 0.4s ease;
+  }
+
+  /* Reset and base styles */
   * {
     margin: 0;
     padding: 0;
@@ -17,18 +136,143 @@
   }
 
   html {
-    background-color: #050505; /* container-L0 */
+    background-color: var(--colors-container-containerL0);
   }
 
   body {
-    font-family: 'Rubik', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: var(--font-family-rubik), var(--font-family-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #0e0e0f; /* container-L1 */
-    color: #cacad6; /* text-high */
+    background-color: var(--colors-container-containerL1);
+    color: var(--colors-text-textHigh);
   }
 
   #root {
-    background-color: #0e0e0f; /* container-L1 */
+    background-color: var(--colors-container-containerL1);
+  }
+
+  /* Typography - AR.IO Brand Fonts */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-family-rubik), "Albert Sans", "Inter", sans-serif;
+    font-weight: 600;
+  }
+
+  /* Code and monospace */
+  code, pre, .monospace {
+    font-family: "JetBrains Mono", "Fragment Mono", monospace;
+  }
+}
+
+/* ==========================================================================
+   Scrollbar Styling - Matches Extension Design
+   ========================================================================== */
+
+@layer utilities {
+  /* Scrollbar for webkit browsers (Chrome, Safari, Edge) */
+  .scrollbar-styled {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) var(--bg-secondary);
+  }
+
+  .scrollbar-styled::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-styled::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 3px;
+  }
+
+  .scrollbar-styled::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: 3px;
+    transition: background var(--transition-fast);
+  }
+
+  .scrollbar-styled::-webkit-scrollbar-thumb:hover {
+    background: var(--border-emphasis);
+  }
+
+  /* Hidden scrollbar but still scrollable */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Inline icons */
+  .inline-icon {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0 0.25em;
+  }
+
+  /* Gradient border utility */
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    background: var(--gradient-primary);
+    border-radius: inherit;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: xor;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+  }
+}
+
+/* ==========================================================================
+   Icon Animations - Matches Extension
+   ========================================================================== */
+
+@layer utilities {
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .icon-spin {
+    animation: spin 1s linear infinite;
+  }
+
+  .animate-slide-in {
+    animation: slideIn var(--transition-base);
+  }
+
+  .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }
