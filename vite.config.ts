@@ -11,12 +11,14 @@ export default defineConfig(({ command }) => ({
         crypto: 'crypto-browserify',
         stream: 'stream-browserify',
         buffer: 'buffer',
+        events: 'events',
       },
     },
   }),
   define: {
     // Required for dependencies that check for Node.js globals
     global: 'globalThis',
+    'process.env': '{}',
   },
   optimizeDeps: {
     esbuildOptions: {

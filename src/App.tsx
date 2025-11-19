@@ -4,7 +4,7 @@ import {
   createRoutingStrategy,
   TrustedPeersGatewaysProvider,
   SimpleCacheGatewaysProvider,
-  PreferredWithFallbackRoutingStrategy,
+  StaticRoutingStrategy,
   type RoutingOption,
 } from '@ar.io/wayfinder-core';
 import { WayfinderConfigProvider, useWayfinderConfig } from './context/WayfinderConfigContext';
@@ -51,14 +51,16 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
 
     if (config.routingStrategy === 'preferred') {
       // Handle preferred gateway separately
-      const preferredGateway = config.preferredGateway || 'https://arweave.net';
-      routingStrategy = new PreferredWithFallbackRoutingStrategy({
-        preferredGateway,
-        // Use random fallback instead of fastest ping to avoid spamming
-        fallbackStrategy: createRoutingStrategy({
-          strategy: 'random',
-          gatewaysProvider,
-        }),
+      // Trim and validate the preferred gateway URL
+      const preferredGatewayRaw = config.preferredGateway?.trim();
+      const preferredGateway = preferredGatewayRaw && preferredGatewayRaw.length > 0
+        ? preferredGatewayRaw
+        : 'https://arweave.net';
+
+      // Use StaticRoutingStrategy to always use the preferred gateway
+      // This ensures the gateway is used without ping checks or timeouts
+      routingStrategy = new StaticRoutingStrategy({
+        gateway: preferredGateway,
       });
     } else {
       // Map 'roundRobin' to 'balanced' for createRoutingStrategy

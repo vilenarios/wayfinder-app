@@ -26,6 +26,6 @@ export const ROUTING_STRATEGY_OPTIONS = [
   {
     value: 'preferred' as const,
     label: 'Preferred Gateway',
-    description: 'Use a specific gateway with fallback',
+    description: 'Always use a specific gateway',
   },
 ] as const;

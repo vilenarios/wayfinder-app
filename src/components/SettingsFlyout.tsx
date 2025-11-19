@@ -19,7 +19,12 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
   }, [config, isOpen]);
 
   const handleSave = () => {
-    updateConfig(localConfig);
+    // Trim the preferred gateway URL before saving
+    const configToSave = {
+      ...localConfig,
+      preferredGateway: localConfig.preferredGateway?.trim(),
+    };
+    updateConfig(configToSave);
     onClose();
   };
 
@@ -119,8 +124,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                   className="w-full px-4 py-2 bg-container-L2 border border-stroke-low text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent"
                 />
                 <p className="text-sm text-text-low mt-2">
-                  Enter your preferred gateway URL. Wayfinder will use this gateway with automatic
-                  fallback if unavailable.
+                  Enter your preferred gateway URL. This gateway will always be used for all requests (e.g., https://arweave.net, https://g8way.io).
                 </p>
               </div>
             )}
