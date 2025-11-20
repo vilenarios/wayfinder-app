@@ -48,7 +48,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
       <div className="fixed right-0 top-0 h-full w-full sm:max-w-md bg-container-L1 shadow-2xl z-50 overflow-y-auto">
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-stroke-low">
+          <div className="flex items-center justify-between p-4 border-b border-stroke-low">
             <h2 className="text-2xl font-bold text-white">Settings</h2>
             <button
               onClick={handleCancel}
@@ -72,17 +72,17 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
           </div>
 
           {/* Content */}
-          <div className="flex-1 p-6 space-y-6">
+          <div className="flex-1 p-4 space-y-4">
             {/* Routing Strategy */}
             <div>
-              <label className="block text-sm font-semibold text-text-high mb-3">
+              <label className="block text-sm font-semibold text-text-high mb-2">
                 Routing Strategy
               </label>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {ROUTING_STRATEGY_OPTIONS.map((option) => (
                   <label
                     key={option.value}
-                    className="flex items-start gap-3 p-3 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2"
+                    className="flex items-start gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2"
                   >
                     <input
                       type="radio"
@@ -132,7 +132,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
 
             {/* Telemetry */}
             <div>
-              <label className="flex items-center gap-3 p-3 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2">
+              <label className="flex items-center gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2">
                 <input
                   type="checkbox"
                   checked={localConfig.telemetryEnabled}
@@ -152,20 +152,11 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               </label>
             </div>
-
-            {/* Info Section */}
-            <div className="bg-container-L2 border border-stroke-high rounded-lg p-4">
-              <h3 className="font-semibold text-text-high mb-2">About Wayfinder</h3>
-              <p className="text-sm text-text-low">
-                Wayfinder provides decentralized, verifiable access to Arweave data through the
-                AR.IO Network. Your settings are saved locally and apply to all requests.
-              </p>
-            </div>
           </div>
 
           {/* Footer */}
-          <div className="p-6 border-t border-stroke-low bg-container-L2">
-            <div className="flex gap-3 mb-3">
+          <div className="p-4 border-t border-stroke-low bg-container-L2">
+            <div className="flex gap-3 mb-2">
               <button
                 onClick={handleCancel}
                 className="flex-1 px-4 py-2 border border-stroke-low text-text-high rounded-lg hover:bg-container-L3 transition-colors font-medium"
@@ -179,8 +170,24 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 Save Changes
               </button>
             </div>
-            <div className="text-center text-xs text-text-low">
-              Wayfinder v{packageJson.version}
+            <div className="flex items-center justify-center gap-3 text-xs">
+              <a
+                href="https://github.com/vilenarios/wayfinder-app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-text-low hover:text-accent-teal-primary transition-colors"
+              >
+                Wayfinder v{packageJson.version}
+              </a>
+              <span className="text-text-low">|</span>
+              <a
+                href="https://chromewebstore.google.com/detail/ario-wayfinder/hnhmeknhajanolcoihhkkaaimapnmgil?hl=en-US&pli=1"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-teal-primary hover:text-accent-teal-secondary transition-colors"
+              >
+                Get the extension
+              </a>
             </div>
           </div>
         </div>
