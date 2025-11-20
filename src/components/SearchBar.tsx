@@ -82,33 +82,31 @@ export const SearchBar = memo(function SearchBar({
 
   const formClasses = isSearched ? 'max-w-none px-3 md:px-6' : 'max-w-2xl w-full px-4 md:px-6';
 
-  // When collapsed on results page, render minimal button instead of full form
+  // When collapsed on results page, render minimal floating button
   if (isSearched && isCollapsed) {
     return (
-      <div className={containerClasses}>
-        <div className="px-3 md:px-6">
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="px-2 py-1.5 md:py-2 bg-container-L2 text-icon-mid rounded-lg hover:bg-container-L3 hover:text-icon-high transition-colors border border-stroke-low"
-            title="Expand search bar"
+      <div className="absolute top-2 left-3 md:left-6 z-10">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="px-2 py-1.5 md:py-2 bg-container-L2 text-icon-mid rounded-lg hover:bg-container-L3 hover:text-icon-high transition-colors border border-stroke-low shadow-md"
+          title="Expand search bar"
+        >
+          <svg
+            className="w-4 h-4 md:w-5 md:h-5 transition-transform duration-200"
+            style={{ transform: 'rotate(180deg)' }}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
           >
-            <svg
-              className="w-4 h-4 md:w-5 md:h-5 transition-transform duration-200"
-              style={{ transform: 'rotate(180deg)' }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 15l7-7 7 7"
-              />
-            </svg>
-          </button>
-        </div>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 15l7-7 7 7"
+            />
+          </svg>
+        </button>
       </div>
     );
   }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 import { ROUTING_STRATEGY_OPTIONS } from '../utils/constants';
 import type { WayfinderConfig } from '../types';
+import packageJson from '../../package.json';
 
 interface SettingsFlyoutProps {
   isOpen: boolean;
@@ -164,7 +165,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
 
           {/* Footer */}
           <div className="p-6 border-t border-stroke-low bg-container-L2">
-            <div className="flex gap-3">
+            <div className="flex gap-3 mb-3">
               <button
                 onClick={handleCancel}
                 className="flex-1 px-4 py-2 border border-stroke-low text-text-high rounded-lg hover:bg-container-L3 transition-colors font-medium"
@@ -177,6 +178,9 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
               >
                 Save Changes
               </button>
+            </div>
+            <div className="text-center text-xs text-text-low">
+              Wayfinder v{packageJson.version}
             </div>
           </div>
         </div>

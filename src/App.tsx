@@ -79,6 +79,10 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
       },
       telemetrySettings: {
         enabled: config.telemetryEnabled,
+        // Identify this app in telemetry data sent to AR.IO
+        clientName: 'wayfinder-app',
+        clientVersion: '1.0.0',
+        // SDK provides defaults for: exporterUrl, apiKey, sampleRate (0.1 = 10%)
       },
       verificationSettings: {
         enabled: false, // Disabled as per requirements
