@@ -120,16 +120,36 @@ const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
 
 ### Gateway Configuration
 
-The app configures Wayfinder with a gateway provider in App.tsx:20-72:
+The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:20-80):
 
-1. **TrustedPeersGatewaysProvider**: Fetches dynamic gateway list from arweave.net's `/ar-io/peers` endpoint
-2. **Gateway Limiting**: Randomly selects 10 gateways from the full list using Fisher-Yates shuffle algorithm (App.tsx:27-42) to reduce spam and improve performance
-3. **SimpleCacheGatewaysProvider**: Caches gateway list for 5 minutes to reduce API calls
-4. **createRoutingStrategy**: Maps user's routing strategy choice to actual Wayfinder routing strategy instances
+1. **Resilient Gateway Fetching**: Multi-layer fallback system with minimal hardcoding
+   - **Primary**: Tries arweave.net/ar-io/peers (only hardcoded gateway)
+   - **Backup**: Tries [host-gateway]/ar-io/peers where host-gateway is extracted from the URL
+     - Example: viewing from wayfinder.vilenarios.com → tries vilenarios.com/ar-io/peers
+   - **Fallback**: If peers endpoints fail, uses the host gateway directly
+     - Self-healing: if you can load the app, that gateway works!
+   - **Local Dev**: Falls back to arweave.net when localhost is detected
+   - Eliminates single point of failure - app always works
+
+2. **Gateway Limiting**: Randomly selects 20 gateways using Fisher-Yates shuffle
+   - Balanced between reliability and network load
+   - Uses all available gateways if fewer than 20
+
+3. **SimpleCacheGatewaysProvider**: Caches gateway list for 3 minutes
+   - Allows fresh gateways on retry without excessive API calls
+   - Cache is busted on manual retry via `gatewayRefreshCounter`
+
+4. **createRoutingStrategy**: Maps user's routing strategy choice to Wayfinder routing strategy instances
    - 'roundRobin' is mapped to 'balanced' for the Wayfinder core library
    - 'preferred' uses `StaticRoutingStrategy` which always returns the user's specified gateway (no ping checks or fallback)
 
-The routing strategy configuration is recreated whenever the user changes their routing preference, telemetry settings, or preferred gateway URL. The WayfinderProvider is keyed by routing strategy and preferred gateway (App.tsx:88) to force re-initialization only when necessary.
+5. **Auto-Retry System**: Automatically retries with fresh gateways on failure
+   - Up to 2 auto-retries (3 total attempts) before showing error
+   - Each retry gets a new random set of 20 gateways
+   - 500ms delay between retries to avoid hammering
+   - Only retries on gateway/network errors (not 404s)
+
+The routing strategy configuration is recreated whenever the user changes their routing preference, telemetry settings, or preferred gateway URL. The WayfinderProvider is keyed by routing strategy, preferred gateway, and `gatewayRefreshCounter` to force re-initialization when needed.
 
 ### Gateway Retry Mechanism
 

@@ -13,20 +13,76 @@ import { ContentViewer } from './components/ContentViewer';
 import { SettingsFlyout } from './components/SettingsFlyout';
 
 // Separate component that only handles Wayfinder configuration
-function WayfinderWrapper({ children }: { children: React.ReactNode }) {
+function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React.ReactNode; gatewayRefreshCounter: number }) {
   const { config } = useWayfinderConfig();
 
   // Build Wayfinder configuration based on user settings
   const wayfinderConfig = useMemo(() => {
-    // Create a gateways provider with caching - limit to 10 gateways to avoid spam
-    const baseTrustedPeersProvider = new TrustedPeersGatewaysProvider({
-      trustedGateway: 'https://arweave.net',
-    });
+    // Get the gateway serving this app as ultimate fallback
+    const getHostGateway = (): URL | null => {
+      if (typeof window === 'undefined') return null;
 
-    // Wrap with a limiting provider to randomly select 10 gateways
+      const hostname = window.location.hostname;
+
+      // Skip localhost and local development
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.includes('192.168')) {
+        return null;
+      }
+
+      // If accessed via subdomain like wayfinder.vilenarios.com, extract the gateway
+      // Remove the first subdomain part (e.g., "wayfinder") to get the gateway domain
+      const parts = hostname.split('.');
+      if (parts.length >= 2) {
+        // If it's like wayfinder.ar-io.dev, return ar-io.dev
+        // If it's like wayfinder.vilenarios.com, return vilenarios.com
+        const gateway = parts.slice(1).join('.');
+        return new URL(`https://${gateway}`);
+      }
+
+      // If accessed directly (e.g., ar-io.dev), use it as-is
+      return new URL(`https://${hostname}`);
+    };
+
+    // Create a resilient gateways provider with multiple fallbacks
+    const resilientProvider = {
+      async getGateways(): Promise<URL[]> {
+        // Try trusted gateways to fetch the peers list (only 2 hardcoded for redundancy)
+        const trustedPeersEndpoints = [
+          'https://arweave.net',
+          'https://ar-io.dev',
+        ];
+
+        for (const trustedGateway of trustedPeersEndpoints) {
+          try {
+            const provider = new TrustedPeersGatewaysProvider({ trustedGateway });
+            const gateways = await provider.getGateways();
+            if (gateways && gateways.length > 0) {
+              console.log(`Successfully fetched ${gateways.length} gateways from ${trustedGateway}`);
+              return gateways;
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch gateways from ${trustedGateway}:`, error);
+            // Continue to next trusted gateway
+          }
+        }
+
+        // If all trusted sources fail, use the gateway serving this app
+        const hostGateway = getHostGateway();
+        if (hostGateway) {
+          console.warn(`All trusted peers endpoints failed, using host gateway: ${hostGateway}`);
+          return [hostGateway];
+        }
+
+        // Ultimate fallback: just arweave.net (only for local dev where host detection fails)
+        console.warn('All sources failed, using arweave.net as final fallback');
+        return [new URL('https://arweave.net')];
+      },
+    };
+
+    // Wrap with a limiting provider to randomly select 20 gateways
     const limitedProvider = {
       async getGateways() {
-        const allGateways = await baseTrustedPeersProvider.getGateways();
+        const allGateways = await resilientProvider.getGateways();
 
         // Shuffle the gateways array using Fisher-Yates algorithm
         const shuffled = [...allGateways];
@@ -36,14 +92,14 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
           [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
 
-        // Return random 10 gateways
-        return shuffled.slice(0, 10);
+        // Return random 20 gateways (or all if fewer than 20)
+        return shuffled.slice(0, Math.min(20, shuffled.length));
       },
     };
 
     const gatewaysProvider = new SimpleCacheGatewaysProvider({
       gatewaysProvider: limitedProvider,
-      ttlSeconds: 5 * 60, // 5 minutes cache (in seconds) - reduced for more variety
+      ttlSeconds: 3 * 60, // 3 minutes cache - allows fresh gateways on retry
     });
 
     // Map user's routing strategy to Wayfinder routing strategy
@@ -88,10 +144,11 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
         enabled: false, // Disabled as per requirements
       },
     };
-  }, [config.telemetryEnabled, config.routingStrategy, config.preferredGateway]);
+  }, [config.telemetryEnabled, config.routingStrategy, config.preferredGateway, gatewayRefreshCounter]);
 
   // Only remount WayfinderProvider when routing config actually changes, not on every state change
-  const routingKey = `${config.routingStrategy}-${config.preferredGateway || 'none'}`;
+  // Include gatewayRefreshCounter to force fresh gateway selection on retry
+  const routingKey = `${config.routingStrategy}-${config.preferredGateway || 'none'}-${gatewayRefreshCounter}`;
 
   return (
     <WayfinderProvider key={routingKey} {...wayfinderConfig}>
@@ -100,7 +157,7 @@ function WayfinderWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AppContent() {
+function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: number; setGatewayRefreshCounter: (fn: (prev: number) => number) => void }) {
   const [searchInput, setSearchInput] = useState('');
   const [isSearched, setIsSearched] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -108,6 +165,7 @@ function AppContent() {
   const [shouldAutoOpenInNewTab, setShouldAutoOpenInNewTab] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchCounter, setSearchCounter] = useState(0);
+  const [retryAttempts, setRetryAttempts] = useState(0);
 
   // On mount, check URL for search query and auto-execute
   useEffect(() => {
@@ -142,6 +200,7 @@ function AppContent() {
     setIsSearched(true);
     setIsCollapsed(false); // Expand when doing a new search
     setShouldAutoOpenInNewTab(false); // Reset flag
+    setRetryAttempts(0); // Reset retry attempts for new search
     setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
     // Update URL with search query
@@ -151,9 +210,15 @@ function AppContent() {
   }, []);
 
   const handleRetry = useCallback(() => {
-    // Force re-fetch with a different gateway by incrementing counter
+    // Increment retry attempts
+    const newAttempts = retryAttempts + 1;
+    setRetryAttempts(newAttempts);
+
+    // Every retry forces fresh gateway selection by incrementing gatewayRefreshCounter
+    // This busts the cache and gets a new random set of gateways
+    setGatewayRefreshCounter((prev) => prev + 1);
     setSearchCounter((prev) => prev + 1);
-  }, []);
+  }, [retryAttempts]);
 
   const handleOpenInNewTab = useCallback(() => {
     if (resolvedUrl) {
@@ -174,6 +239,7 @@ function AppContent() {
     setIsSearched(true);
     setIsCollapsed(false);
     setShouldAutoOpenInNewTab(true); // Set flag to auto-open
+    setRetryAttempts(0); // Reset retry attempts for new search
     setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
     // Update URL with search query
@@ -218,6 +284,7 @@ function AppContent() {
             input={searchInput}
             onRetry={handleRetry}
             onUrlResolved={handleUrlResolved}
+            retryAttempts={retryAttempts}
           />
         </div>
       )}
@@ -228,10 +295,15 @@ function AppContent() {
 }
 
 export default function App() {
+  const [gatewayRefreshCounter, setGatewayRefreshCounter] = useState(0);
+
   return (
     <WayfinderConfigProvider>
-      <WayfinderWrapper>
-        <AppContent />
+      <WayfinderWrapper gatewayRefreshCounter={gatewayRefreshCounter}>
+        <AppContent
+          gatewayRefreshCounter={gatewayRefreshCounter}
+          setGatewayRefreshCounter={setGatewayRefreshCounter}
+        />
       </WayfinderWrapper>
     </WayfinderConfigProvider>
   );
