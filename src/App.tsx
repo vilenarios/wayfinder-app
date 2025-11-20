@@ -29,30 +29,40 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
         return null;
       }
 
-      // If accessed via subdomain like wayfinder.vilenarios.com, extract the gateway
-      // Remove the first subdomain part (e.g., "wayfinder") to get the gateway domain
       const parts = hostname.split('.');
-      if (parts.length >= 2) {
-        // If it's like wayfinder.ar-io.dev, return ar-io.dev
-        // If it's like wayfinder.vilenarios.com, return vilenarios.com
+
+      // If accessed via subdomain like wayfinder.vilenarios.com (3+ parts), extract the gateway
+      if (parts.length > 2) {
+        // Remove the first subdomain part (e.g., "wayfinder") to get the gateway domain
+        // wayfinder.ar-io.dev → ar-io.dev
+        // wayfinder.vilenarios.com → vilenarios.com
         const gateway = parts.slice(1).join('.');
         return new URL(`https://${gateway}`);
       }
 
-      // If accessed directly (e.g., ar-io.dev), use it as-is
-      return new URL(`https://${hostname}`);
+      // If accessed directly via gateway domain (2 parts like ar-io.dev or arweave.net)
+      if (parts.length === 2) {
+        return new URL(`https://${hostname}`);
+      }
+
+      // Single part hostname or invalid - shouldn't happen in production
+      return null;
     };
 
     // Create a resilient gateways provider with multiple fallbacks
     const resilientProvider = {
       async getGateways(): Promise<URL[]> {
-        // Try trusted gateways to fetch the peers list (only 2 hardcoded for redundancy)
-        const trustedPeersEndpoints = [
-          'https://arweave.net',
-          'https://ar-io.dev',
-        ];
+        // Build list of peers endpoints to try
+        const peersEndpoints: string[] = ['https://arweave.net'];
 
-        for (const trustedGateway of trustedPeersEndpoints) {
+        // Add the host gateway as backup peers source
+        const hostGateway = getHostGateway();
+        if (hostGateway) {
+          peersEndpoints.push(hostGateway.toString());
+        }
+
+        // Try each peers endpoint in sequence
+        for (const trustedGateway of peersEndpoints) {
           try {
             const provider = new TrustedPeersGatewaysProvider({ trustedGateway });
             const gateways = await provider.getGateways();
@@ -62,19 +72,17 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
             }
           } catch (error) {
             console.warn(`Failed to fetch gateways from ${trustedGateway}:`, error);
-            // Continue to next trusted gateway
           }
         }
 
-        // If all trusted sources fail, use the gateway serving this app
-        const hostGateway = getHostGateway();
+        // If all peers endpoints fail, just use the host gateway itself
         if (hostGateway) {
-          console.warn(`All trusted peers endpoints failed, using host gateway: ${hostGateway}`);
+          console.warn('All peers endpoints failed, using host gateway directly:', hostGateway);
           return [hostGateway];
         }
 
-        // Ultimate fallback: just arweave.net (only for local dev where host detection fails)
-        console.warn('All sources failed, using arweave.net as final fallback');
+        // Ultimate fallback for local development
+        console.warn('No host gateway detected (localhost?), using arweave.net as fallback');
         return [new URL('https://arweave.net')];
       },
     };
@@ -218,7 +226,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     // This busts the cache and gets a new random set of gateways
     setGatewayRefreshCounter((prev) => prev + 1);
     setSearchCounter((prev) => prev + 1);
-  }, [retryAttempts]);
+  }, [retryAttempts, setGatewayRefreshCounter]);
 
   const handleOpenInNewTab = useCallback(() => {
     if (resolvedUrl) {
