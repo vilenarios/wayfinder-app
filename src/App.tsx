@@ -31,22 +31,21 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
 
       const parts = hostname.split('.');
 
-      // If accessed via subdomain like wayfinder.vilenarios.com (3+ parts), extract the gateway
-      if (parts.length > 2) {
-        // Remove the first subdomain part (e.g., "wayfinder") to get the gateway domain
+      // If hostname starts with "wayfinder" subdomain, strip it to get the gateway
+      // This handles any number of domain parts (2, 3, 4, 5, etc.)
+      if (parts[0] === 'wayfinder' && parts.length > 1) {
         // wayfinder.ar-io.dev → ar-io.dev
         // wayfinder.vilenarios.com → vilenarios.com
+        // wayfinder.some.gateway.com → some.gateway.com
         const gateway = parts.slice(1).join('.');
         return new URL(`https://${gateway}`);
       }
 
-      // If accessed directly via gateway domain (2 parts like ar-io.dev or arweave.net)
-      if (parts.length === 2) {
-        return new URL(`https://${hostname}`);
-      }
-
-      // Single part hostname or invalid - shouldn't happen in production
-      return null;
+      // Otherwise, the hostname IS the gateway (works for 2, 3, 4+ parts)
+      // ar-io.dev → ar-io.dev
+      // some.gateway.com → some.gateway.com
+      // my.multi.part.gateway.com → my.multi.part.gateway.com
+      return new URL(`https://${hostname}`);
     };
 
     // Create a resilient gateways provider with multiple fallbacks

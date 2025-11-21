@@ -1,7 +1,7 @@
 {
   "name": "Wayfinder-App",
   "private": false,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A decentralized web application for accessing Arweave content via ArNS names and transaction IDs through the AR.IO gateway network",
   "license": "AGPL-3.0",
