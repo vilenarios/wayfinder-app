@@ -221,6 +221,13 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         // Register service worker (vite-plugin-pwa serves at /sw.js in dev, /service-worker.mjs in prod)
         await swMessenger.register(import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js');
 
+        // Check if we have a controller
+        if (!navigator.serviceWorker.controller) {
+          console.warn('Service worker registered but not controlling page - will be active after reload');
+          setSwReady(false);
+          return;
+        }
+
         // Get trusted gateways
         const trustedGateways = await getTrustedGateways();
 

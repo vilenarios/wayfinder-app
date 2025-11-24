@@ -25,6 +25,25 @@ export class ServiceWorkerMessenger {
         await navigator.serviceWorker.ready;
         console.log('Service worker ready');
 
+        // Wait for controller to be available (service worker needs to control the page)
+        if (!navigator.serviceWorker.controller) {
+          console.log('Waiting for service worker to take control...');
+          await new Promise<void>((resolve) => {
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              console.log('Service worker now controlling the page');
+              resolve();
+            }, { once: true });
+
+            // Also timeout after 2 seconds if no control
+            setTimeout(() => {
+              if (!navigator.serviceWorker.controller) {
+                console.warn('Service worker not controlling yet - may need page reload');
+              }
+              resolve();
+            }, 2000);
+          });
+        }
+
       } catch (error) {
         console.error('Service worker registration failed:', error);
         throw error;

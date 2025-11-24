@@ -23,18 +23,29 @@ export async function getTrustedGateways(): Promise<URL[]> {
     const ario = ARIO.mainnet();
     const gateways = await ario.getGateways();
 
+    console.log('Raw gateways data:', Object.entries(gateways).slice(0, 2)); // Debug: show first 2 entries
+
     // Sort by stake
     const sortedByStake = Object.entries(gateways)
       .map(([domain, info]) => {
-        // Type guard to ensure info is an object with the expected properties
-        if (typeof info === 'object' && info !== null && 'operatorStake' in info) {
-          const gatewayInfo = info as { operatorStake?: number; totalDelegatedStake?: number };
-          return {
-            domain,
-            totalStake: (gatewayInfo.operatorStake || 0) + (gatewayInfo.totalDelegatedStake || 0),
-          };
+        // Debug log to see actual structure
+        console.log(`Gateway ${domain}:`, info);
+
+        // AR.IO SDK returns complex gateway objects
+        // Try to extract stake information safely
+        let totalStake = 0;
+
+        if (typeof info === 'object' && info !== null) {
+          const anyInfo = info as any;
+
+          // Try different possible property names
+          const operatorStake = anyInfo.operatorStake || anyInfo.stake || 0;
+          const delegatedStake = anyInfo.totalDelegatedStake || anyInfo.delegatedStake || 0;
+
+          totalStake = operatorStake + delegatedStake;
         }
-        return { domain, totalStake: 0 };
+
+        return { domain, totalStake };
       })
       .filter(g => g.totalStake > 0)
       .sort((a, b) => b.totalStake - a.totalStake)
