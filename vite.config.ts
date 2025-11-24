@@ -1,10 +1,27 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'path'
+import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src/service-worker',
+      filename: 'service-worker.ts',
+      injectManifest: {
+        globPatterns: [], // Don't precache anything
+        injectionPoint: undefined, // We don't use injection
+      },
+      injectRegister: null, // Don't auto-inject registration
+      manifest: false, // Don't generate web manifest
+      devOptions: {
+        enabled: true, // Enable service worker in dev mode
+        type: 'module',
+      },
+    }),
+  ],
   ...(command === 'build' && {
     resolve: {
       alias: {
@@ -13,23 +30,6 @@ export default defineConfig(({ command }) => ({
         stream: 'stream-browserify',
         buffer: 'buffer',
         events: 'events',
-      },
-    },
-    build: {
-      rollupOptions: {
-        input: {
-          main: resolve(__dirname, 'index.html'),
-          sw: resolve(__dirname, 'src/service-worker/service-worker.ts'),
-        },
-        output: {
-          entryFileNames: (chunkInfo) => {
-            // Service worker goes to public root
-            if (chunkInfo.name === 'sw') {
-              return 'service-worker.js';
-            }
-            return 'assets/[name]-[hash].js';
-          },
-        },
       },
     },
   }),

@@ -218,8 +218,8 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
       }
 
       try {
-        // Register service worker
-        await swMessenger.register('/service-worker.js');
+        // Register service worker (vite-plugin-pwa serves at /sw.js in dev, /service-worker.mjs in prod)
+        await swMessenger.register(import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js');
 
         // Get trusted gateways
         const trustedGateways = await getTrustedGateways();
