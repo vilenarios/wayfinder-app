@@ -224,6 +224,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         // Check if we have a controller
         if (!navigator.serviceWorker.controller) {
           console.warn('Service worker registered but not controlling page - will be active after reload');
+          alert('Verification enabled! Please reload the page for it to take effect.');
           setSwReady(false);
           return;
         }
