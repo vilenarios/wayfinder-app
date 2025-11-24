@@ -4,6 +4,7 @@ export interface WayfinderConfig {
   routingStrategy: RoutingStrategy;
   preferredGateway?: string;
   telemetryEnabled: boolean;
+  verificationEnabled: boolean;
 }
 
 export interface WayfinderConfigContextValue {

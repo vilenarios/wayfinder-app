@@ -5,6 +5,7 @@ export const STORAGE_KEY = 'wayfinder-app-config';
 export const DEFAULT_CONFIG: WayfinderConfig = {
   routingStrategy: 'random',
   telemetryEnabled: false,
+  verificationEnabled: false,
 };
 
 export const ROUTING_STRATEGY_OPTIONS = [

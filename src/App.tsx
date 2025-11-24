@@ -11,6 +11,10 @@ import { WayfinderConfigProvider, useWayfinderConfig } from './context/Wayfinder
 import { SearchBar } from './components/SearchBar';
 import { ContentViewer } from './components/ContentViewer';
 import { SettingsFlyout } from './components/SettingsFlyout';
+import { VerificationStatus } from './components/VerificationStatus';
+import { swMessenger } from './utils/serviceWorkerMessaging';
+import { getTrustedGateways } from './utils/trustedGateways';
+import { detectInputType } from './utils/detectInputType';
 
 // Separate component that only handles Wayfinder configuration
 function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React.ReactNode; gatewayRefreshCounter: number }) {
@@ -165,6 +169,7 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
 }
 
 function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: number; setGatewayRefreshCounter: (fn: (prev: number) => number) => void }) {
+  const { config } = useWayfinderConfig();
   const [searchInput, setSearchInput] = useState('');
   const [isSearched, setIsSearched] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -173,6 +178,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchCounter, setSearchCounter] = useState(0);
   const [retryAttempts, setRetryAttempts] = useState(0);
+  const [swReady, setSwReady] = useState(false);
 
   // On mount, check URL for search query and auto-execute
   useEffect(() => {
@@ -201,6 +207,42 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Register and initialize service worker for verification
+  useEffect(() => {
+    async function initServiceWorker() {
+      if (!config.verificationEnabled) {
+        console.log('Verification disabled, skipping service worker');
+        setSwReady(false);
+        return;
+      }
+
+      try {
+        // Register service worker
+        await swMessenger.register('/service-worker.js');
+
+        // Get trusted gateways
+        const trustedGateways = await getTrustedGateways();
+
+        // Initialize Wayfinder in service worker
+        await swMessenger.initializeWayfinder({
+          trustedGateways: trustedGateways.map(u => u.toString()),
+          routingStrategy: config.routingStrategy,
+          preferredGateway: config.preferredGateway,
+          enabled: true,
+        });
+
+        setSwReady(true);
+        console.log('Service worker ready for verification');
+
+      } catch (error) {
+        console.error('Failed to initialize service worker:', error);
+        setSwReady(false);
+      }
+    }
+
+    initServiceWorker();
+  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway]);
 
   const handleSearch = useCallback((input: string) => {
     setSearchInput(input);
@@ -286,15 +328,29 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
       {isSearched && searchInput && (
         <div className="flex-1 overflow-hidden" key="content-viewer-container">
-          <ContentViewer
-            key={`${searchInput}-${searchCounter}`}
-            input={searchInput}
-            onRetry={handleRetry}
-            onUrlResolved={handleUrlResolved}
-            retryAttempts={retryAttempts}
-          />
+          {config.verificationEnabled && swReady ? (
+            // Use service worker proxy for verified streaming
+            <iframe
+              key={`${searchInput}-${searchCounter}`}
+              src={`/ar-proxy?${detectInputType(searchInput) === 'txId' ? `tx=${searchInput}` : `arns=${searchInput}`}`}
+              className="w-full h-full border-0"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+              title={`Verified content for ${searchInput}`}
+            />
+          ) : (
+            // Direct gateway URL (no verification)
+            <ContentViewer
+              key={`${searchInput}-${searchCounter}`}
+              input={searchInput}
+              onRetry={handleRetry}
+              onUrlResolved={handleUrlResolved}
+              retryAttempts={retryAttempts}
+            />
+          )}
         </div>
       )}
+
+      {config.verificationEnabled && <VerificationStatus />}
 
       <SettingsFlyout isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>

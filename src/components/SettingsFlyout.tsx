@@ -152,6 +152,33 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               </label>
             </div>
+
+            {/* Data Verification */}
+            <div className="border border-stroke-high rounded-lg p-3 bg-container-L2">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={localConfig.verificationEnabled}
+                  onChange={(e) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      verificationEnabled: e.target.checked,
+                    })
+                  }
+                  className="mt-1 w-4 h-4 text-accent-teal-primary rounded focus:ring-accent-teal-primary accent-accent-teal-primary"
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-text-high">Enable Data Verification 🔒</div>
+                  <div className="text-sm text-text-low mt-1">
+                    Cryptographically verifies ALL content using top-staked AR.IO gateways.
+                    This ensures data integrity and protects against tampered content.
+                  </div>
+                  <div className="mt-2 text-xs text-semantic-warning">
+                    ⚠️ Performance Impact: Apps with many resources may take longer to load during verification.
+                  </div>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Footer */}

@@ -21,6 +21,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ar.io/sdk": "^3.21.0",
     "@ar.io/wayfinder-react": "^1.0.26",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
