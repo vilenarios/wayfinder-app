@@ -21,47 +21,48 @@ export async function getTrustedGateways(): Promise<URL[]> {
   try {
     console.log('Fetching top-staked gateways from AR.IO network...');
     const ario = ARIO.mainnet();
-    const gateways = await ario.getGateways();
 
-    console.log('Raw gateways data:', Object.entries(gateways).slice(0, 2)); // Debug: show first 2 entries
+    // SDK v3 returns PaginationResult<AoGatewayWithAddress>
+    const result = await ario.getGateways({
+      sortBy: 'operatorStake',
+      sortOrder: 'desc',
+      limit: TOP_N_GATEWAYS,
+    });
 
-    // Sort by stake
-    const sortedByStake = Object.entries(gateways)
-      .map(([domain, info]) => {
-        // Debug log to see actual structure
-        console.log(`Gateway ${domain}:`, info);
+    console.log('Gateways result:', {
+      totalItems: result.totalItems,
+      limit: result.limit,
+      itemCount: result.items?.length,
+    });
 
-        // AR.IO SDK returns complex gateway objects
-        // Try to extract stake information safely
-        let totalStake = 0;
-
-        if (typeof info === 'object' && info !== null) {
-          const anyInfo = info as any;
-
-          // Try different possible property names
-          const operatorStake = anyInfo.operatorStake || anyInfo.stake || 0;
-          const delegatedStake = anyInfo.totalDelegatedStake || anyInfo.delegatedStake || 0;
-
-          totalStake = operatorStake + delegatedStake;
-        }
-
-        return { domain, totalStake };
-      })
-      .filter(g => g.totalStake > 0)
-      .sort((a, b) => b.totalStake - a.totalStake)
-      .slice(0, TOP_N_GATEWAYS)
-      .map(g => `https://${g.domain}`);
-
-    if (sortedByStake.length === 0) {
-      throw new Error('No staked gateways found');
+    if (!result.items || result.items.length === 0) {
+      throw new Error('No gateways returned from AR.IO network');
     }
 
-    console.log(`Found ${sortedByStake.length} top-staked gateways:`, sortedByStake);
+    // Extract top-staked gateways from the paginated result
+    // Gateway structure: { settings: { fqdn: string }, operatorStake: number, totalDelegatedStake: number, ... }
+    const topGateways = result.items
+      .filter(gateway => {
+        // Only include active gateways
+        return gateway.status === 'joined' && gateway.settings?.fqdn;
+      })
+      .map(gateway => {
+        const domain = gateway.settings.fqdn;
+        const totalStake = (gateway.operatorStake || 0) + (gateway.totalDelegatedStake || 0);
+        console.log(`Gateway ${domain}: operatorStake=${gateway.operatorStake}, delegatedStake=${gateway.totalDelegatedStake}, total=${totalStake}`);
+        return `https://${domain}`;
+      });
+
+    if (topGateways.length === 0) {
+      throw new Error('No active staked gateways found');
+    }
+
+    console.log(`Found ${topGateways.length} top-staked gateways:`, topGateways);
 
     // Cache
-    cacheGateways(sortedByStake);
+    cacheGateways(topGateways);
 
-    return sortedByStake.map(url => new URL(url));
+    return topGateways.map(url => new URL(url));
   } catch (error) {
     console.error('Failed to fetch staked gateways:', error);
 
@@ -104,4 +105,47 @@ function cacheGateways(gateways: string[]): void {
 
 export function clearTrustedGatewayCache(): void {
   localStorage.removeItem(CACHE_KEY);
+}
+
+/**
+ * Get a broader pool of gateways for content routing/fetching.
+ * This fetches from arweave.net/ar-io/peers which returns many active gateways.
+ */
+export async function getRoutingGateways(): Promise<URL[]> {
+  try {
+    console.log('Fetching routing gateways from arweave.net/ar-io/peers...');
+    const response = await fetch('https://arweave.net/ar-io/peers');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch peers: ${response.status}`);
+    }
+
+    const peers: string[] = await response.json();
+
+    // Filter and convert to URLs
+    const gateways = peers
+      .filter(peer => peer && typeof peer === 'string')
+      .map(peer => {
+        // Peers are typically domain names without protocol
+        if (peer.startsWith('http://') || peer.startsWith('https://')) {
+          return new URL(peer);
+        }
+        return new URL(`https://${peer}`);
+      });
+
+    // Shuffle for load distribution
+    for (let i = gateways.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [gateways[i], gateways[j]] = [gateways[j], gateways[i]];
+    }
+
+    // Return a reasonable subset (e.g., 20 gateways)
+    const selected = gateways.slice(0, Math.min(20, gateways.length));
+    console.log(`Selected ${selected.length} routing gateways from ${gateways.length} total peers`);
+
+    return selected;
+  } catch (error) {
+    console.error('Failed to fetch routing gateways:', error);
+    // Return empty array - service worker will fall back to verification gateways
+    return [];
+  }
 }

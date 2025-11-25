@@ -25,8 +25,21 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
       ...localConfig,
       preferredGateway: localConfig.preferredGateway?.trim(),
     };
+
+    // Check if verification was just enabled (was off, now on)
+    const verificationJustEnabled = !config.verificationEnabled && configToSave.verificationEnabled;
+
     updateConfig(configToSave);
     onClose();
+
+    // Auto-reload when verification is enabled to activate the service worker
+    // Service workers need a page reload to take control
+    if (verificationJustEnabled) {
+      // Small delay to ensure config is saved to localStorage
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+    }
   };
 
   const handleCancel = () => {

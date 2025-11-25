@@ -13,8 +13,7 @@ import { ContentViewer } from './components/ContentViewer';
 import { SettingsFlyout } from './components/SettingsFlyout';
 import { VerificationStatus } from './components/VerificationStatus';
 import { swMessenger } from './utils/serviceWorkerMessaging';
-import { getTrustedGateways } from './utils/trustedGateways';
-import { detectInputType } from './utils/detectInputType';
+import { getTrustedGateways, getRoutingGateways } from './utils/trustedGateways';
 
 // Separate component that only handles Wayfinder configuration
 function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React.ReactNode; gatewayRefreshCounter: number }) {
@@ -218,23 +217,34 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
       }
 
       try {
-        // Register service worker (vite-plugin-pwa serves at /sw.js in dev, /service-worker.mjs in prod)
-        await swMessenger.register(import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js');
+        // Register service worker
+        // Dev: vite-plugin-pwa serves at /dev-sw.js?dev-sw as ES module
+        // Prod: vite-plugin-pwa outputs to /service-worker.js as IIFE (no module type needed)
+        await swMessenger.register(
+          import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/service-worker.js',
+          import.meta.env.DEV ? { type: 'module' } : undefined
+        );
 
         // Check if we have a controller
+        // On first registration, the SW won't control the page until reload
+        // The SettingsFlyout auto-reloads when verification is first enabled
+        // For edge cases (e.g., cleared SW), we just log and continue - it will work on next reload
         if (!navigator.serviceWorker.controller) {
-          console.warn('Service worker registered but not controlling page - will be active after reload');
-          alert('Verification enabled! Please reload the page for it to take effect.');
+          console.log('Service worker registered but not yet controlling page - will be active after reload');
           setSwReady(false);
           return;
         }
 
-        // Get trusted gateways
+        // Get trusted gateways (top-staked, for hash verification)
         const trustedGateways = await getTrustedGateways();
+
+        // Get routing gateways (broader pool, for content fetching)
+        const routingGateways = await getRoutingGateways();
 
         // Initialize Wayfinder in service worker
         await swMessenger.initializeWayfinder({
           trustedGateways: trustedGateways.map(u => u.toString()),
+          routingGateways: routingGateways.map(u => u.toString()),
           routingStrategy: config.routingStrategy,
           preferredGateway: config.preferredGateway,
           enabled: true,
@@ -338,9 +348,10 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         <div className="flex-1 overflow-hidden" key="content-viewer-container">
           {config.verificationEnabled && swReady ? (
             // Use service worker proxy for verified streaming
+            // Path-based routing: /ar-proxy/{arns-or-txid}/ allows nested resources to be intercepted
             <iframe
               key={`${searchInput}-${searchCounter}`}
-              src={`/ar-proxy?${detectInputType(searchInput) === 'txId' ? `tx=${searchInput}` : `arns=${searchInput}`}`}
+              src={`/ar-proxy/${searchInput}/`}
               className="w-full h-full border-0"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
               title={`Verified content for ${searchInput}`}

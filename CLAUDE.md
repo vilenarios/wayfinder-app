@@ -60,16 +60,16 @@ The app uses React Context for configuration management with localStorage persis
 1. **WayfinderConfigContext** (src/context/WayfinderConfigContext.tsx): Manages user settings
    - Routing strategy selection (random, fastest ping, round robin, preferred gateway)
    - Telemetry preferences
-   - Settings flyout open/close state
+   - Content verification toggle (service worker-based)
    - Auto-saves to localStorage on changes (key: `wayfinder-app-config`)
 
 2. **WayfinderProvider** from @ar.io/wayfinder-react: Manages gateway routing and URL resolution
    - Receives configuration from WayfinderConfigContext
-   - Re-initializes when config changes (via key prop in App.tsx:67)
+   - Re-initializes when config changes (via key prop in App.tsx:162)
    - Provides `useWayfinderUrl` hook for resolving ar:// URLs to gateway URLs
    - **Critical**: Must be configured with `routingSettings.strategy` or it will have no gateways available
    - Uses `TrustedPeersGatewaysProvider` to fetch gateway list from arweave.net
-   - Wraps provider with `SimpleCacheGatewaysProvider` for 5-minute caching
+   - Wraps provider with `SimpleCacheGatewaysProvider` for 3-minute caching
 
 ### Component Hierarchy
 
@@ -84,6 +84,8 @@ App (WayfinderConfigProvider wrapper)
         ├── ContentViewer - Iframe wrapper using useWayfinderUrl hook
         │   - Memoized to prevent unnecessary re-renders
         │   - Keyed by input and searchCounter for retry mechanism
+        │   - Bypassed when verification is enabled (uses service worker proxy instead)
+        ├── VerificationStatus - Shows verification status indicator (when enabled)
         └── SettingsFlyout - Settings panel (overlay)
 ```
 
@@ -92,6 +94,7 @@ App (WayfinderConfigProvider wrapper)
 - `searchCounter`: Incremented on retry to force new gateway selection
 - `resolvedUrl`: Current resolved gateway URL (passed to parent for "Open in new tab" button)
 - `shouldAutoOpenInNewTab`: Flag for CMD/CTRL+Enter behavior
+- `swReady`: Service worker initialization state for verification mode
 
 ### Input Detection Logic
 
@@ -100,7 +103,7 @@ The app automatically detects input type using `detectInputType()` (src/utils/de
 - **Transaction ID**: Exactly 43 characters matching `/^[A-Za-z0-9_-]{43}$/`
 - **ArNS Name**: Everything else (1-51 chars, case-insensitive alphanumeric with dashes/underscores)
 
-ContentViewer.tsx:12-13 uses this to pass the correct params to `useWayfinderUrl`:
+ContentViewer.tsx:15,19-21 uses this to pass the correct params to `useWayfinderUrl`:
 ```typescript
 const inputType = detectInputType(input);
 const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
@@ -114,13 +117,13 @@ const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
 4. `useWayfinderUrl()` hook resolves ar:// URL to gateway URL based on routing strategy
 5. Iframe loads the resolved URL (or new tab if CMD/CTRL+Enter was used)
 
-**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:107-115) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:117-131).
+**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:184-192) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:194-209).
 
-**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:184-191) to open the tab once the URL resolves.
+**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:313-320) to open the tab once the URL resolves.
 
 ### Gateway Configuration
 
-The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:20-80):
+The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:20-169):
 
 1. **Resilient Gateway Fetching**: Multi-layer fallback system with minimal hardcoding
    - **Primary**: Tries arweave.net/ar-io/peers (only hardcoded gateway)
@@ -153,11 +156,41 @@ The routing strategy configuration is recreated whenever the user changes their 
 
 ### Gateway Retry Mechanism
 
-When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:211) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
+When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:351) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
 
 ### Settings Persistence
 
-Settings are stored in localStorage with the key `wayfinder-app-config` (src/utils/constants.ts:3). The context initializes from localStorage on mount and saves on every config change (src/context/WayfinderConfigContext.tsx:22-28).
+Settings are stored in localStorage with the key `wayfinder-app-config` (src/utils/constants.ts:3). The context initializes from localStorage on mount and saves on every config change (src/context/WayfinderConfigContext.tsx:20-26).
+
+### Service Worker Content Verification
+
+When `verificationEnabled` is true, the app uses a service worker to verify Arweave content integrity:
+
+**Architecture** (src/service-worker/):
+- `service-worker.ts`: Main fetch interceptor that proxies `/ar-proxy` requests
+- `wayfinder-instance.ts`: Maintains Wayfinder instance within service worker context
+- `manifest-resolver.ts`: Parses and resolves Arweave manifest paths to transaction IDs
+- `context-tracker.ts`: Tracks iframe context for nested resource resolution
+- `verification-tracker.ts`: Records verification success/failure for manifest resources
+
+**Flow**:
+1. User enables verification in settings → triggers service worker registration (App.tsx:211-253)
+2. App uses `swMessenger.initializeWayfinder()` to configure Wayfinder in service worker
+3. ContentViewer is bypassed; iframe loads `/ar-proxy?tx=ABC` or `/ar-proxy?arns=name` (App.tsx:339-347)
+4. Service worker intercepts request, fetches via Wayfinder with verification
+5. For manifests, parses paths and intercepts nested resource requests
+6. `VerificationStatus` component shows current verification state
+
+**Service Worker Registration**:
+- Uses `vite-plugin-pwa` with `injectManifest` strategy
+- Development: `/dev-sw.js?dev-sw` (module type)
+- Production: `/sw.js`
+- Requires page reload after first enable (service worker must control the page)
+
+**Messaging** (src/utils/serviceWorkerMessaging.ts):
+- `swMessenger.register(url)`: Register and wait for controller
+- `swMessenger.initializeWayfinder(config)`: Send config to service worker
+- `swMessenger.clearCache()`: Clear all caches in service worker
 
 ## Design System
 
@@ -314,7 +347,7 @@ This two-layer approach ensures compatibility while optimizing development perfo
 
 ## iframe Security Configuration
 
-The ContentViewer iframe (src/components/ContentViewer.tsx:58) uses these sandbox attributes:
+The ContentViewer iframe (src/components/ContentViewer.tsx:101) uses these sandbox attributes:
 - `allow-scripts` - Required for interactive content
 - `allow-same-origin` - Required for certain content types
 - `allow-forms` - Allows form submissions
@@ -336,8 +369,14 @@ These settings balance functionality with security for displaying arbitrary Arwe
 
 1. Update `WayfinderConfig` interface in src/types/index.ts:3
 2. Update `DEFAULT_CONFIG` in src/utils/constants.ts:5
-3. Update `wayfinderConfig` construction in App.tsx:26
+3. Update `wayfinderConfig` construction in App.tsx:24
 4. Update SettingsFlyout.tsx UI to expose new setting
+
+### Adding Service Worker Message Types
+
+1. Add message type handler in src/service-worker/service-worker.ts (message event listener)
+2. Add corresponding method in src/utils/serviceWorkerMessaging.ts
+3. Update src/service-worker/types.ts if new types are needed
 
 ### Error Handling Pattern
 
@@ -371,3 +410,12 @@ All components using Wayfinder hooks (like ContentViewer) receive `{ resolvedUrl
 - Ensure src/polyfills.ts is being imported first in main.tsx (before App component)
 - For production builds, verify vite.config.ts has the build-time aliases configured
 - Check that buffer, crypto-browserify, and stream-browserify are installed in devDependencies
+
+**Service worker not working**:
+- Check browser DevTools > Application > Service Workers for registration status
+- After enabling verification, page reload may be required (alert will prompt)
+- In development, vite-plugin-pwa serves `/dev-sw.js?dev-sw`; in production it's `/sw.js`
+- Clear service worker and reload: DevTools > Application > Service Workers > Unregister
+- Check console for `[SW]` prefixed log messages for debugging
+
+**Verification shows "not controlling page"**: The service worker must control the page to intercept requests. This happens automatically after first registration + reload. The app alerts the user to reload when needed.

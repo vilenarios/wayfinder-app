@@ -9,11 +9,13 @@ export class ServiceWorkerMessenger {
 
   /**
    * Initialize and register service worker
+   * @param scriptURL - URL to the service worker script
+   * @param options - Registration options (e.g., { type: 'module' } for ES module service workers)
    */
-  async register(scriptURL: string): Promise<void> {
+  async register(scriptURL: string, options?: RegistrationOptions): Promise<void> {
     if ('serviceWorker' in navigator) {
       try {
-        this.registration = await navigator.serviceWorker.register(scriptURL);
+        this.registration = await navigator.serviceWorker.register(scriptURL, options);
         console.log('Service worker registered:', this.registration);
 
         // Set up message listener
@@ -108,6 +110,7 @@ export class ServiceWorkerMessenger {
    */
   async initializeWayfinder(config: {
     trustedGateways: string[];
+    routingGateways?: string[];
     routingStrategy: string;
     preferredGateway?: string;
     enabled: boolean;

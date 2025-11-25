@@ -29,7 +29,10 @@ export interface VerificationEvent {
 }
 
 export interface WayfinderConfig {
+  /** Top-staked gateways used for hash verification */
   trustedGateways: string[];
+  /** Broader pool of gateways used for content routing/fetching */
+  routingGateways?: string[];
   routingStrategy: string;
   preferredGateway?: string;
   enabled: boolean;

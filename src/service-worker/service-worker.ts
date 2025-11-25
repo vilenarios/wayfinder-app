@@ -1,16 +1,52 @@
 /// <reference lib="webworker" />
 
-import { ManifestResolver } from './manifest-resolver';
-import { ContextTracker } from './context-tracker';
-import { VerificationTracker } from './verification-tracker';
+// CRITICAL: Import polyfills FIRST before any other imports
+// These must run before any dependency code that might reference Node.js globals
+// Order matters! module-polyfill must be first as other polyfills may use exports
+import './module-polyfill'; // Provides exports/module for CommonJS dependencies
+import './process-polyfill'; // Provides process.env for dependencies that check it
+import './buffer-polyfill'; // Provides Buffer for crypto-browserify
+import './fetch-polyfill'; // Preserves native fetch before Zone.js patches it
+
 import { initializeWayfinder, getWayfinder, isWayfinderReady } from './wayfinder-instance';
-import type { WayfinderConfig, IframeContext } from './types';
+import type { WayfinderConfig, VerificationEvent } from './types';
 
 declare const self: ServiceWorkerGlobalScope;
 
-const manifestResolver = new ManifestResolver();
-const contextTracker = new ContextTracker();
-const verificationTracker = new VerificationTracker();
+// Track verification counts per identifier (ArNS name or txId)
+const verificationCounts = new Map<string, { total: number; verified: number; failed: number }>();
+
+function getOrCreateCounter(identifier: string) {
+  if (!verificationCounts.has(identifier)) {
+    verificationCounts.set(identifier, { total: 0, verified: 0, failed: 0 });
+  }
+  return verificationCounts.get(identifier)!;
+}
+
+function logVerificationSummary(identifier: string) {
+  const counts = verificationCounts.get(identifier);
+  if (counts) {
+    console.log(`[SW] 📊 Verification Summary for "${identifier}":`, {
+      total: counts.total,
+      verified: counts.verified,
+      failed: counts.failed,
+      status: counts.failed === 0 ? '✅ ALL VERIFIED' : '⚠️ SOME FAILED',
+    });
+  }
+}
+
+/**
+ * Broadcast verification event to all clients
+ */
+async function broadcastVerificationEvent(event: VerificationEvent): Promise<void> {
+  const clients = await self.clients.matchAll();
+  clients.forEach(client => {
+    client.postMessage({
+      type: 'VERIFICATION_EVENT',
+      event,
+    });
+  });
+}
 
 // Service Worker Installation
 self.addEventListener('install', () => {
@@ -36,9 +72,8 @@ self.addEventListener('message', (event) => {
   }
 
   if (event.data.type === 'CLEAR_CACHE') {
-    manifestResolver.clearCache();
-    contextTracker.clearAll();
-    verificationTracker.clear();
+    // No-op for now - caches handled by Wayfinder internally
+    console.log('[SW] Cache clear requested');
   }
 });
 
@@ -46,16 +81,16 @@ self.addEventListener('message', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Only intercept requests from our iframe proxy
-  if (url.pathname.startsWith('/ar-proxy')) {
-    event.respondWith(handleArweaveProxy(event.request, event.clientId));
+  // Path-based routing: /ar-proxy/{identifier}/{path...}
+  // This intercepts ALL requests under /ar-proxy/ including nested resources
+  if (url.pathname.startsWith('/ar-proxy/')) {
+    event.respondWith(handleArweaveProxyPath(event.request));
     return;
   }
 
-  // Check if this is a request from an iframe we're tracking
-  const context = contextTracker.getContext(event.clientId);
-  if (context) {
-    event.respondWith(handleNestedResource(event.request, event.clientId, context));
+  // Legacy query-based routing (for backwards compatibility)
+  if (url.pathname === '/ar-proxy') {
+    event.respondWith(handleArweaveProxyQuery(event.request));
     return;
   }
 
@@ -64,9 +99,143 @@ self.addEventListener('fetch', (event) => {
 });
 
 /**
- * Handle initial /ar-proxy?tx=ABC123 or /ar-proxy?arns=myapp request
+ * Handle path-based proxy: /ar-proxy/{identifier}/{path...}
+ * This is the main handler that intercepts ALL requests under /ar-proxy/
+ * including nested resources like /ar-proxy/vilenarios/script.js
  */
-async function handleArweaveProxy(request: Request, clientId: string): Promise<Response> {
+async function handleArweaveProxyPath(request: Request): Promise<Response> {
+  if (!isWayfinderReady()) {
+    console.warn('[SW] ⚠️ Wayfinder not ready for request:', request.url);
+    return new Response('Wayfinder not initialized', { status: 503 });
+  }
+
+  const url = new URL(request.url);
+  // Remove /ar-proxy/ prefix to get: {identifier}/{path...}
+  const fullPath = url.pathname.slice('/ar-proxy/'.length);
+
+  // Split into identifier and resource path
+  // Examples:
+  //   "vilenarios/" -> identifier="vilenarios", resourcePath=""
+  //   "vilenarios/script.js" -> identifier="vilenarios", resourcePath="script.js"
+  //   "ABC123...XYZ/" -> identifier="ABC123...XYZ", resourcePath=""
+  const firstSlash = fullPath.indexOf('/');
+  const identifier = firstSlash > 0 ? fullPath.slice(0, firstSlash) : fullPath;
+  const resourcePath = firstSlash > 0 ? fullPath.slice(firstSlash + 1) : '';
+
+  if (!identifier) {
+    console.error('[SW] ❌ Missing identifier in path:', url.pathname);
+    return new Response('Missing identifier in path', { status: 400 });
+  }
+
+  // Build ar:// URL
+  // For the root request (empty resourcePath), just use ar://{identifier}
+  // For nested resources, use ar://{identifier}/{resourcePath}
+  const arUrl = resourcePath ? `ar://${identifier}/${resourcePath}` : `ar://${identifier}`;
+
+  const isRootRequest = !resourcePath;
+  const requestType = isRootRequest ? '📄 ROOT' : '📦 ASSET';
+
+  console.log(`[SW] ${requestType} Request:`, {
+    originalPath: url.pathname,
+    identifier,
+    resourcePath: resourcePath || '(none)',
+    arUrl,
+  });
+
+  // Get or create counter for this identifier
+  const counter = getOrCreateCounter(identifier);
+
+  // Broadcast "started" event for root requests only
+  if (isRootRequest) {
+    // Reset counter for new root request
+    counter.total = 0;
+    counter.verified = 0;
+    counter.failed = 0;
+
+    broadcastVerificationEvent({
+      type: 'verification-started',
+      txId: identifier,
+      progress: { current: 0, total: 1 },
+    });
+  }
+
+  // Increment total count for this request
+  counter.total++;
+
+  try {
+    const wayfinder = getWayfinder();
+
+    console.log(`[SW] 🔄 Fetching via Wayfinder: ${arUrl}`);
+    const startTime = performance.now();
+
+    // Fetch via Wayfinder - VERIFIED STREAM
+    const response = await wayfinder.request(arUrl);
+
+    const elapsed = (performance.now() - startTime).toFixed(0);
+    const contentType = response.headers.get('content-type') || 'unknown';
+    const contentLength = response.headers.get('content-length') || 'unknown';
+
+    // Mark as verified
+    counter.verified++;
+
+    console.log(`[SW] ✅ Fetched ${arUrl}:`, {
+      status: response.status,
+      contentType,
+      contentLength,
+      elapsed: `${elapsed}ms`,
+      verification: `${counter.verified}/${counter.total} verified`,
+    });
+
+    // Log all response headers for debugging
+    console.log(`[SW] 📋 Response headers for ${resourcePath || 'root'}:`);
+    response.headers.forEach((value, key) => {
+      console.log(`[SW]   ${key}: ${value}`);
+    });
+
+    // Broadcast progress
+    broadcastVerificationEvent({
+      type: 'verification-progress',
+      txId: identifier,
+      resourcePath: resourcePath || undefined,
+      progress: { current: counter.verified, total: counter.total },
+    });
+
+    // Log summary periodically
+    if (counter.verified % 5 === 0 || isRootRequest) {
+      logVerificationSummary(identifier);
+    }
+
+    // Return the verified response
+    return new Response(response.body, {
+      headers: response.headers,
+      status: response.status,
+    });
+
+  } catch (error) {
+    console.error(`[SW] ❌ Error fetching ${arUrl}:`, error);
+
+    // Mark as failed
+    counter.failed++;
+
+    // Broadcast failure event
+    broadcastVerificationEvent({
+      type: 'verification-failed',
+      txId: identifier,
+      resourcePath: resourcePath || undefined,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    logVerificationSummary(identifier);
+
+    return new Response(`Failed to load: ${error}`, { status: 500 });
+  }
+}
+
+/**
+ * Handle legacy query-based proxy: /ar-proxy?tx=ABC123 or /ar-proxy?arns=myapp
+ * Simplified version - just fetches and returns content directly
+ */
+async function handleArweaveProxyQuery(request: Request): Promise<Response> {
   if (!isWayfinderReady()) {
     return new Response('Wayfinder not initialized', { status: 503 });
   }
@@ -79,180 +248,36 @@ async function handleArweaveProxy(request: Request, clientId: string): Promise<R
     return new Response('Missing tx or arns parameter', { status: 400 });
   }
 
+  const contentId = txId || arnsName!;
+  const arUrl = arnsName ? `ar://${arnsName}` : `ar://${txId}`;
+
+  console.log(`[SW] Legacy query request: ${arUrl}`);
+
+  broadcastVerificationEvent({
+    type: 'verification-started',
+    txId: contentId,
+    progress: { current: 0, total: 1 },
+  });
+
   try {
     const wayfinder = getWayfinder();
-
-    // Build ar:// URL
-    const arUrl = arnsName ? `ar://${arnsName}` : `ar://${txId}`;
-
-    console.log(`[SW] Fetching ${arUrl}`);
-
-    // Fetch via Wayfinder - VERIFIED STREAM
     const response = await wayfinder.request(arUrl);
 
-    // Check if it's a manifest by looking at content-type
-    const contentType = response.headers.get('content-type');
-
-    // Peek at the response to determine if manifest
-    // We need to tee the stream to check without consuming it
-    const [checkStream, returnStream] = response.body!.tee();
-
-    // Read first chunk to check if manifest
-    const reader = checkStream.getReader();
-    const firstChunk = await reader.read();
-    reader.releaseLock();
-
-    const isManifest = manifestResolver.isManifest(
-      contentType,
-      firstChunk.value ? new TextDecoder().decode(firstChunk.value) : undefined
-    );
-
-    if (isManifest) {
-      console.log(`[SW] Detected manifest, parsing...`);
-
-      // Parse the manifest (async, don't await)
-      const resolvedTxId = txId || arnsName!; // Use arns name as key if no txId
-      parseAndTrackManifest(resolvedTxId, checkStream, clientId);
-
-      // Return the stream to iframe immediately
-      return new Response(returnStream, {
-        headers: response.headers,
-        status: response.status,
-      });
-    }
-
-    // Not a manifest - just return verified stream
-    console.log(`[SW] Not a manifest, returning content directly`);
-    return new Response(returnStream, {
+    return new Response(response.body, {
       headers: response.headers,
       status: response.status,
     });
 
   } catch (error) {
     console.error('[SW] Error handling Arweave proxy:', error);
+
+    broadcastVerificationEvent({
+      type: 'verification-failed',
+      txId: contentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
     return new Response(`Failed to load content: ${error}`, { status: 500 });
-  }
-}
-
-/**
- * Parse manifest and set up context tracking
- */
-async function parseAndTrackManifest(
-  manifestTxId: string,
-  stream: ReadableStream,
-  clientId: string
-): Promise<void> {
-  try {
-    const manifest = await manifestResolver.parseManifest(manifestTxId, stream);
-
-    // Set context for this iframe
-    contextTracker.setContext(clientId, {
-      manifestTxId,
-      basePath: '/',
-      depth: 0,
-    });
-
-    // Start tracking verification progress
-    const allTxIds = manifestResolver.getAllTransactionIds(manifest);
-    verificationTracker.startManifestVerification(manifestTxId, allTxIds.length);
-
-    console.log(`[SW] Tracking ${allTxIds.length} resources for manifest ${manifestTxId}`);
-
-  } catch (error) {
-    console.error(`[SW] Failed to parse manifest ${manifestTxId}:`, error);
-  }
-}
-
-/**
- * Handle nested resource requests from iframe
- */
-async function handleNestedResource(
-  request: Request,
-  clientId: string,
-  context: IframeContext
-): Promise<Response> {
-  if (!isWayfinderReady()) {
-    return new Response('Wayfinder not initialized', { status: 503 });
-  }
-
-  const url = new URL(request.url);
-  const path = url.pathname;
-
-  console.log(`[SW] Nested resource request: ${path} (context: ${context.manifestTxId})`);
-
-  try {
-    // Get the manifest
-    const manifest = manifestResolver.getManifest(context.manifestTxId);
-    if (!manifest) {
-      // Manifest not parsed yet - wait a bit and retry
-      await new Promise(resolve => setTimeout(resolve, 100));
-      return handleNestedResource(request, clientId, context);
-    }
-
-    // Resolve path to transaction ID
-    const resolvedTxId = manifestResolver.resolvePath(manifest, path);
-
-    if (!resolvedTxId) {
-      console.warn(`[SW] Path not found in manifest: ${path}`);
-      return new Response(`Not found: ${path}`, { status: 404 });
-    }
-
-    console.log(`[SW] Resolved ${path} → ${resolvedTxId}`);
-
-    // Fetch via Wayfinder - VERIFIED STREAM
-    const wayfinder = getWayfinder();
-    const response = await wayfinder.request(`ar://${resolvedTxId}`);
-
-    // Check if this resolved to another manifest (nested manifest)
-    const contentType = response.headers.get('content-type');
-    const [checkStream, returnStream] = response.body!.tee();
-
-    const reader = checkStream.getReader();
-    const firstChunk = await reader.read();
-    reader.releaseLock();
-
-    const isNestedManifest = manifestResolver.isManifest(
-      contentType,
-      firstChunk.value ? new TextDecoder().decode(firstChunk.value) : undefined
-    );
-
-    if (isNestedManifest) {
-      console.log(`[SW] Detected nested manifest at ${path}`);
-
-      // Create nested context
-      const nestedContext = contextTracker.createNestedContext(
-        clientId,
-        resolvedTxId,
-        path
-      );
-
-      // Parse nested manifest
-      parseAndTrackManifest(resolvedTxId, checkStream, clientId);
-
-      // Update context to nested
-      contextTracker.setContext(clientId, nestedContext);
-    }
-
-    // Record successful verification
-    verificationTracker.recordSuccess(context.manifestTxId, resolvedTxId);
-
-    // Return verified stream
-    return new Response(returnStream, {
-      headers: response.headers,
-      status: response.status,
-    });
-
-  } catch (error) {
-    console.error(`[SW] Error handling nested resource ${path}:`, error);
-
-    // Record failed verification
-    verificationTracker.recordFailure(
-      context.manifestTxId,
-      'unknown',
-      String(error)
-    );
-
-    return new Response(`Failed to load resource: ${error}`, { status: 500 });
   }
 }
 
