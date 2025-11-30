@@ -75,22 +75,19 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
             const provider = new TrustedPeersGatewaysProvider({ trustedGateway });
             const gateways = await provider.getGateways();
             if (gateways && gateways.length > 0) {
-              console.log(`Successfully fetched ${gateways.length} gateways from ${trustedGateway}`);
               return gateways;
             }
-          } catch (error) {
-            console.warn(`Failed to fetch gateways from ${trustedGateway}:`, error);
+          } catch {
+            // Try next endpoint
           }
         }
 
         // If all peers endpoints fail, just use the host gateway itself
         if (hostGateway) {
-          console.warn('All peers endpoints failed, using host gateway directly:', hostGateway);
           return [hostGateway];
         }
 
         // Ultimate fallback for local development
-        console.warn('No host gateway detected (localhost?), using arweave.net as fallback');
         return [new URL('https://arweave.net')];
       },
     };
@@ -228,7 +225,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
   useEffect(() => {
     async function initServiceWorker() {
       if (!config.verificationEnabled) {
-        console.log('Verification disabled, skipping service worker');
         setSwReady(false);
         return;
       }
@@ -245,9 +241,8 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         // Check if we have a controller
         // On first registration, the SW won't control the page until reload
         // The SettingsFlyout auto-reloads when verification is first enabled
-        // For edge cases (e.g., cleared SW), we just log and continue - it will work on next reload
+        // For edge cases (e.g., cleared SW), it will work on next reload
         if (!navigator.serviceWorker.controller) {
-          console.log('Service worker registered but not yet controlling page - will be active after reload');
           setSwReady(false);
           return;
         }
@@ -271,10 +266,9 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         });
 
         setSwReady(true);
-        console.log('Service worker ready for verification');
 
       } catch (error) {
-        console.error('Failed to initialize service worker:', error);
+        console.error('[SW] Initialization failed:', error);
         setSwReady(false);
       }
     }
@@ -293,7 +287,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
         // Handle routing gateway event - update the resolved URL display
         if (vEvent.type === 'routing-gateway' && vEvent.gatewayUrl) {
-          console.log('Routing via gateway:', vEvent.gatewayUrl);
           // For ArNS names, show the subdomain format (e.g., vilenarios.saveario.site)
           // For txIds (43 chars), show the path format (e.g., saveario.site/{txId})
           const isTxId = /^[A-Za-z0-9_-]{43}$/.test(vEvent.identifier);
@@ -336,8 +329,9 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         }
 
         // Handle verification-complete
+        // Note: This event fires even when some resources failed
+        // Only set to 'verified' if there was no error
         if (vEvent.type === 'verification-complete') {
-          setVerificationState('verified');
           if (vEvent.progress) {
             setVerificationStats(prev => ({
               ...prev,
@@ -345,14 +339,23 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
               verified: vEvent.progress!.current,
             }));
           }
+          // Only set 'verified' state if no error was reported
+          // If there were failures, keep the current state (failed/partial)
+          if (!vEvent.error) {
+            setVerificationState('verified');
+          }
         }
 
         // Handle verification-failed
         if (vEvent.type === 'verification-failed') {
-          setVerificationStats(prev => ({
-            ...prev,
-            failed: prev.failed + 1,
-          }));
+          // Only increment failed count for resource-level failures (has resourcePath)
+          // Top-level failures (ArNS resolution, manifest fetch) don't have resourcePath
+          if (vEvent.resourcePath) {
+            setVerificationStats(prev => ({
+              ...prev,
+              failed: prev.failed + 1,
+            }));
+          }
           setVerificationError(vEvent.error);
 
           // Determine if this is a total failure or partial
@@ -410,8 +413,8 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     if (config.verificationEnabled && searchInput) {
       try {
         await swMessenger.clearVerification(searchInput);
-      } catch (error) {
-        console.warn('Failed to clear verification state:', error);
+      } catch {
+        // Non-critical - verification will still retry
       }
     }
 

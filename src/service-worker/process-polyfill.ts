@@ -19,6 +19,4 @@ const processShim = {
 (globalThis as any).process = processShim;
 (self as any).process = processShim;
 
-console.log('[SW] Process polyfill installed');
-
 export {};

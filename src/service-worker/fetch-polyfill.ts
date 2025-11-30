@@ -27,5 +27,3 @@ Object.defineProperty(self, 'fetch', {
 
 // Also export it for direct use if needed
 export { nativeFetch };
-
-console.log('[SW] Fetch polyfill installed - native fetch preserved');

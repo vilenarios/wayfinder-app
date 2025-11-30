@@ -1,3 +1,6 @@
+// Import VerificationMethod from main types to avoid duplication
+import type { VerificationMethod } from '../types';
+
 export interface ArweaveManifest {
   manifest: 'arweave/paths';
   version: string;
@@ -61,9 +64,14 @@ export interface VerificationEvent {
 // Keep old txId field for backwards compatibility
 export type { VerificationEvent as LegacyVerificationEvent };
 
-export type VerificationMethod = 'hash' | 'signature';
+// Re-export VerificationMethod from main types
+export type { VerificationMethod };
 
-export interface WayfinderConfig {
+/**
+ * Service Worker Wayfinder configuration.
+ * Different from the React app's WayfinderConfig - this is what gets sent to the SW.
+ */
+export interface SwWayfinderConfig {
   /** Top-staked gateways used for hash verification */
   trustedGateways: string[];
   /** Broader pool of gateways used for content routing/fetching */

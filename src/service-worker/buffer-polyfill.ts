@@ -12,6 +12,4 @@ declare const self: ServiceWorkerGlobalScope;
 (globalThis as any).Buffer = Buffer;
 (self as any).Buffer = Buffer;
 
-console.log('[SW] Buffer polyfill installed');
-
 export { Buffer };

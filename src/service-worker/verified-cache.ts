@@ -6,6 +6,10 @@
  * Includes LRU eviction when size limit is exceeded.
  */
 
+import { logger } from './logger';
+
+const TAG = 'Cache';
+
 // Maximum cache size in bytes (100MB)
 const MAX_CACHE_SIZE = 100 * 1024 * 1024;
 
@@ -31,7 +35,7 @@ class VerifiedCacheImpl {
 
     // If single resource is larger than cache, don't cache it
     if (resourceSize > MAX_CACHE_SIZE) {
-      console.warn(`[Cache] Resource too large to cache: ${txId} (${resourceSize} bytes)`);
+      logger.warn(TAG, `Too large: ${txId.slice(0, 8)}... (${(resourceSize / 1024 / 1024).toFixed(1)}MB)`);
       return;
     }
 
@@ -55,7 +59,7 @@ class VerifiedCacheImpl {
     });
     this.currentSize += resourceSize;
 
-    console.log(`[Cache] Stored verified resource: ${txId} (${resource.contentType}, ${resourceSize} bytes, total: ${(this.currentSize / 1024 / 1024).toFixed(1)}MB)`);
+    logger.debug(TAG, `Stored: ${txId.slice(0, 8)}... (${(this.currentSize / 1024 / 1024).toFixed(1)}MB total)`);
   }
 
   /**
@@ -74,7 +78,7 @@ class VerifiedCacheImpl {
       const evicted = this.cache.get(oldest.txId)!;
       this.currentSize -= evicted.data.byteLength;
       this.cache.delete(oldest.txId);
-      console.log(`[Cache] Evicted LRU: ${oldest.txId}`);
+      logger.debug(TAG, `Evicted LRU: ${oldest.txId.slice(0, 8)}...`);
     }
   }
 
@@ -152,7 +156,7 @@ class VerifiedCacheImpl {
     const stats = this.getStats();
     this.cache.clear();
     this.currentSize = 0;
-    console.log(`[Cache] Cleared ${stats.count} resources (${stats.totalBytes} bytes)`);
+    logger.info(TAG, `Cleared ${stats.count} resources (${(stats.totalBytes / 1024 / 1024).toFixed(1)}MB)`);
   }
 
   /**
@@ -171,7 +175,7 @@ class VerifiedCacheImpl {
       }
     }
     this.currentSize -= freedBytes;
-    console.log(`[Cache] Cleared ${cleared} resources for manifest (${freedBytes} bytes freed)`);
+    logger.debug(TAG, `Cleared ${cleared} manifest resources (${(freedBytes / 1024 / 1024).toFixed(1)}MB freed)`);
   }
 }
 

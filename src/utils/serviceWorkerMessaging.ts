@@ -4,7 +4,6 @@ export interface ServiceWorkerMessage {
 }
 
 export class ServiceWorkerMessenger {
-  private registration: ServiceWorkerRegistration | null = null;
   private listeners = new Map<string, Set<(data: any) => void>>();
 
   /**
@@ -15,8 +14,7 @@ export class ServiceWorkerMessenger {
   async register(scriptURL: string, options?: RegistrationOptions): Promise<void> {
     if ('serviceWorker' in navigator) {
       try {
-        this.registration = await navigator.serviceWorker.register(scriptURL, options);
-        console.log('Service worker registered:', this.registration);
+        await navigator.serviceWorker.register(scriptURL, options);
 
         // Set up message listener
         navigator.serviceWorker.addEventListener('message', (event) => {
@@ -25,29 +23,23 @@ export class ServiceWorkerMessenger {
 
         // Wait for service worker to be ready
         await navigator.serviceWorker.ready;
-        console.log('Service worker ready');
 
         // Wait for controller to be available (service worker needs to control the page)
         if (!navigator.serviceWorker.controller) {
-          console.log('Waiting for service worker to take control...');
           await new Promise<void>((resolve) => {
             navigator.serviceWorker.addEventListener('controllerchange', () => {
-              console.log('Service worker now controlling the page');
               resolve();
             }, { once: true });
 
             // Also timeout after 2 seconds if no control
             setTimeout(() => {
-              if (!navigator.serviceWorker.controller) {
-                console.warn('Service worker not controlling yet - may need page reload');
-              }
               resolve();
             }, 2000);
           });
         }
 
       } catch (error) {
-        console.error('Service worker registration failed:', error);
+        console.error('[SW] Registration failed:', error);
         throw error;
       }
     } else {

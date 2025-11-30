@@ -16,6 +16,4 @@ const exportsShim = moduleShim.exports;
 (self as any).module = moduleShim;
 (self as any).exports = exportsShim;
 
-console.log('[SW] Module/exports polyfill installed');
-
 export {};

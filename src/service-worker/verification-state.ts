@@ -9,8 +9,11 @@
  */
 
 import type { ArweaveManifest, ManifestVerificationState, VerificationEvent } from './types';
+import { logger } from './logger';
 
 declare const self: ServiceWorkerGlobalScope;
+
+const TAG = 'State';
 
 // Active manifest verifications keyed by identifier (ArNS name or txId)
 const manifestStates = new Map<string, ManifestVerificationState>();
@@ -53,7 +56,7 @@ export function startManifestVerification(identifier: string): ManifestVerificat
     identifier,
   });
 
-  console.log(`[State] Started verification for "${identifier}"`);
+  logger.info(TAG, `Started: ${identifier}`);
   return state;
 }
 
@@ -68,7 +71,7 @@ export function setResolvedTxId(identifier: string, manifestTxId: string, gatewa
     if (gateway) {
       state.routingGateway = gateway;
     }
-    console.log(`[State] Resolved "${identifier}" → ${manifestTxId}`);
+    logger.debug(TAG, `Resolved "${identifier}" → ${manifestTxId.slice(0, 8)}...`);
   }
 }
 
@@ -99,9 +102,8 @@ export function setManifestLoaded(
 
   state.totalResources = state.pathToTxId.size;
 
-  // Log all paths in manifest for debugging
-  console.log(`[State] Manifest loaded for "${identifier}": ${state.totalResources} resources`);
-  console.log(`[State] Manifest paths:`, Array.from(state.pathToTxId.keys()));
+  logger.info(TAG, `Manifest: ${state.totalResources} resources`);
+  logger.debug(TAG, `Paths:`, Array.from(state.pathToTxId.keys()));
 
   broadcastEvent({
     type: 'manifest-loaded',
@@ -114,13 +116,13 @@ export function setManifestLoaded(
 /**
  * Record successful verification of a resource.
  */
-export function recordResourceVerified(identifier: string, txId: string, path: string): void {
+export function recordResourceVerified(identifier: string, _txId: string, path: string): void {
   const state = manifestStates.get(identifier);
   if (!state) return;
 
   state.verifiedResources++;
 
-  console.log(`[State] ✓ Verified ${path} (${txId.slice(0, 8)}...) - ${state.verifiedResources}/${state.totalResources}`);
+  logger.debug(TAG, `✓ ${path} (${state.verifiedResources}/${state.totalResources})`);
 
   broadcastEvent({
     type: 'verification-progress',
@@ -145,7 +147,7 @@ export function recordResourceFailed(identifier: string, txId: string, path: str
 
   state.failedResources.push(txId);
 
-  console.log(`[State] ✗ Failed ${path} (${txId.slice(0, 8)}...): ${error}`);
+  logger.warn(TAG, `✗ ${path}: ${error}`);
 
   broadcastEvent({
     type: 'verification-failed',
@@ -165,8 +167,9 @@ export function recordResourceFailed(identifier: string, txId: string, path: str
 /**
  * Mark verification as complete.
  * Status is 'complete' if all succeeded, 'partial' if some failed but some succeeded.
+ * Exported for empty manifest handling.
  */
-function completeVerification(identifier: string): void {
+export function completeVerification(identifier: string): void {
   const state = manifestStates.get(identifier);
   if (!state) return;
 
@@ -186,12 +189,12 @@ function completeVerification(identifier: string): void {
 
   const elapsed = state.completedAt - state.startedAt;
   const statusMsg = state.status === 'complete'
-    ? '✅ All verified'
+    ? `✅ All ${state.verifiedResources} verified`
     : state.status === 'partial'
-      ? `⚠️ Partial: ${state.verifiedResources} verified, ${state.failedResources.length} failed`
-      : `❌ All ${state.failedResources.length} resources failed`;
+      ? `⚠️ ${state.verifiedResources} verified, ${state.failedResources.length} failed`
+      : `❌ All ${state.failedResources.length} failed`;
 
-  console.log(`[State] Verification complete for "${identifier}": ${statusMsg} (${elapsed}ms)`);
+  logger.info(TAG, `Complete: ${statusMsg} (${elapsed}ms)`);
 
   broadcastEvent({
     type: 'verification-complete',
@@ -215,7 +218,7 @@ export function failVerification(identifier: string, error: string): void {
     state.completedAt = Date.now();
   }
 
-  console.error(`[State] Verification failed for "${identifier}": ${error}`);
+  logger.error(TAG, `Failed: ${identifier} - ${error}`);
 
   broadcastEvent({
     type: 'verification-failed',
@@ -314,7 +317,7 @@ export function cleanupOldStates(maxAgeMs: number = 30 * 60 * 1000): number {
   }
 
   if (cleaned > 0) {
-    console.log(`[State] Cleaned up ${cleaned} old manifest states`);
+    logger.debug(TAG, `Cleaned ${cleaned} old states`);
   }
 
   return cleaned;

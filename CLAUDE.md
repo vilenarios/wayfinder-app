@@ -28,9 +28,10 @@ npm run lint
 
 ## Dependencies
 
-The app uses published Wayfinder packages from npm:
+The app uses published AR.IO packages from npm:
 - `@ar.io/wayfinder-react`: ^1.0.26
 - `@ar.io/wayfinder-core`: (peer dependency)
+- `@ar.io/sdk`: ^3.21.0 (for fetching trusted gateways by stake)
 
 For local development with unpublished Wayfinder changes, you can link to a sibling monorepo:
 
@@ -65,7 +66,7 @@ The app uses React Context for configuration management with localStorage persis
 
 2. **WayfinderProvider** from @ar.io/wayfinder-react: Manages gateway routing and URL resolution
    - Receives configuration from WayfinderConfigContext
-   - Re-initializes when config changes (via key prop in App.tsx:162)
+   - Re-initializes when config changes (via key prop in App.tsx:164)
    - Provides `useWayfinderUrl` hook for resolving ar:// URLs to gateway URLs
    - **Critical**: Must be configured with `routingSettings.strategy` or it will have no gateways available
    - Uses `TrustedPeersGatewaysProvider` to fetch gateway list from arweave.net
@@ -103,7 +104,7 @@ The app automatically detects input type using `detectInputType()` (src/utils/de
 - **Transaction ID**: Exactly 43 characters matching `/^[A-Za-z0-9_-]{43}$/`
 - **ArNS Name**: Everything else (1-51 chars, case-insensitive alphanumeric with dashes/underscores)
 
-ContentViewer.tsx:15,19-21 uses this to pass the correct params to `useWayfinderUrl`:
+ContentViewer.tsx:15,19-22 uses this to pass the correct params to `useWayfinderUrl`:
 ```typescript
 const inputType = detectInputType(input);
 const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
@@ -117,13 +118,13 @@ const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
 4. `useWayfinderUrl()` hook resolves ar:// URL to gateway URL based on routing strategy
 5. Iframe loads the resolved URL (or new tab if CMD/CTRL+Enter was used)
 
-**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:184-192) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:194-209).
+**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:183-191) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:193-208).
 
-**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:313-320) to open the tab once the URL resolves.
+**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:344-351) to open the tab once the URL resolves.
 
 ### Gateway Configuration
 
-The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:20-169):
+The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:19-168):
 
 1. **Resilient Gateway Fetching**: Multi-layer fallback system with minimal hardcoding
    - **Primary**: Tries arweave.net/ar-io/peers (only hardcoded gateway)
@@ -156,7 +157,7 @@ The routing strategy configuration is recreated whenever the user changes their 
 
 ### Gateway Retry Mechanism
 
-When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:351) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
+When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:383) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
 
 ### Settings Persistence
 
@@ -173,19 +174,29 @@ When `verificationEnabled` is true, the app uses a service worker to verify Arwe
 - `context-tracker.ts`: Tracks iframe context for nested resource resolution
 - `verification-tracker.ts`: Records verification success/failure for manifest resources
 
+**Dual Gateway Pools** (src/utils/trustedGateways.ts):
+- `getTrustedGateways()`: Top 3 gateways by total stake (operator + delegated) for hash verification
+  - Cached in localStorage for 24 hours
+  - Uses `@ar.io/sdk` to query AR.IO network
+- `getRoutingGateways()`: Broader pool from arweave.net/ar-io/peers for content fetching
+  - Randomly selects 20 gateways from available peers
+  - Provides fallback if trusted gateway fetch fails
+
 **Flow**:
-1. User enables verification in settings → triggers service worker registration (App.tsx:211-253)
-2. App uses `swMessenger.initializeWayfinder()` to configure Wayfinder in service worker
-3. ContentViewer is bypassed; iframe loads `/ar-proxy?tx=ABC` or `/ar-proxy?arns=name` (App.tsx:339-347)
-4. Service worker intercepts request, fetches via Wayfinder with verification
-5. For manifests, parses paths and intercepts nested resource requests
-6. `VerificationStatus` component shows current verification state
+1. User enables verification in settings → triggers service worker registration (App.tsx:211-263)
+2. App fetches trusted gateways (for verification) and routing gateways (for content)
+3. App uses `swMessenger.initializeWayfinder()` to configure Wayfinder in service worker with both gateway pools
+4. ContentViewer is bypassed; iframe loads `/ar-proxy/{arns-or-txid}/` (App.tsx:370-379)
+5. Service worker intercepts request, fetches via routing gateways, verifies against trusted gateways
+6. For manifests, parses paths and intercepts nested resource requests
+7. `VerificationStatus` component shows current verification state
 
 **Service Worker Registration**:
 - Uses `vite-plugin-pwa` with `injectManifest` strategy
 - Development: `/dev-sw.js?dev-sw` (module type)
-- Production: `/sw.js`
+- Production: `/service-worker.js`
 - Requires page reload after first enable (service worker must control the page)
+- SettingsFlyout auto-triggers reload alert when verification is first enabled
 
 **Messaging** (src/utils/serviceWorkerMessaging.ts):
 - `swMessenger.register(url)`: Register and wait for controller
@@ -347,7 +358,7 @@ This two-layer approach ensures compatibility while optimizing development perfo
 
 ## iframe Security Configuration
 
-The ContentViewer iframe (src/components/ContentViewer.tsx:101) uses these sandbox attributes:
+The ContentViewer iframe (src/components/ContentViewer.tsx:101) and verification-mode iframe (App.tsx:377) use these sandbox attributes:
 - `allow-scripts` - Required for interactive content
 - `allow-same-origin` - Required for certain content types
 - `allow-forms` - Allows form submissions
@@ -414,7 +425,7 @@ All components using Wayfinder hooks (like ContentViewer) receive `{ resolvedUrl
 **Service worker not working**:
 - Check browser DevTools > Application > Service Workers for registration status
 - After enabling verification, page reload may be required (alert will prompt)
-- In development, vite-plugin-pwa serves `/dev-sw.js?dev-sw`; in production it's `/sw.js`
+- In development, vite-plugin-pwa serves `/dev-sw.js?dev-sw`; in production it's `/service-worker.js`
 - Clear service worker and reload: DevTools > Application > Service Workers > Unregister
 - Check console for `[SW]` prefixed log messages for debugging
 
