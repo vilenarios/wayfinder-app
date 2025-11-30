@@ -2,16 +2,14 @@
  * Wayfinder client instance for service worker.
  *
  * Creates and manages the Wayfinder client with:
- * - HashVerificationStrategy using top-staked gateways
+ * - Verification strategy (hash or signature) using top-staked gateways
  * - Routing strategy using broader gateway pool
  */
 
-import { createWayfinderClient, HashVerificationStrategy, createRoutingStrategy } from '@ar.io/wayfinder-core';
-import type { Wayfinder } from '@ar.io/wayfinder-core';
-import type { WayfinderConfig } from './types';
+import { createWayfinderClient, HashVerificationStrategy, SignatureVerificationStrategy, createRoutingStrategy } from '@ar.io/wayfinder-core';
+import type { Wayfinder, VerificationStrategy } from '@ar.io/wayfinder-core';
+import type { WayfinderConfig, VerificationMethod } from './types';
 // Note: Verification counting is handled in manifest-verifier.ts, not via Wayfinder callbacks
-
-declare const self: ServiceWorkerGlobalScope;
 
 let wayfinderInstance: Wayfinder | null = null;
 let currentConfig: WayfinderConfig | null = null;
@@ -37,17 +35,38 @@ export function getSelectedGateway(): string | null {
 }
 
 /**
- * Try to create verification settings with HashVerificationStrategy.
+ * Create a verification strategy based on the specified method.
+ * - 'hash': Fast SHA-256 hash comparison (default)
+ * - 'signature': Cryptographic signature verification (most secure)
+ */
+function createVerificationStrategyFromMethod(
+  method: VerificationMethod,
+  trustedGateways: URL[]
+): VerificationStrategy {
+  switch (method) {
+    case 'signature':
+      console.log('[SW] Using SignatureVerificationStrategy (cryptographic)');
+      return new SignatureVerificationStrategy({ trustedGateways });
+    case 'hash':
+    default:
+      console.log('[SW] Using HashVerificationStrategy (fast)');
+      return new HashVerificationStrategy({ trustedGateways });
+  }
+}
+
+/**
+ * Try to create verification settings with the specified strategy.
  * Returns null if crypto is not available (dev mode).
  */
 function tryCreateVerificationSettings(
   trustedGateways: URL[],
   strict: boolean,
+  verificationMethod: VerificationMethod,
   onSuccess: (event: { txId: string }) => void,
   onFailure: (error: Error) => void
 ) {
   try {
-    const strategy = new HashVerificationStrategy({ trustedGateways });
+    const strategy = createVerificationStrategyFromMethod(verificationMethod, trustedGateways);
 
     return {
       enabled: true,
@@ -59,7 +78,7 @@ function tryCreateVerificationSettings(
       },
     };
   } catch (error) {
-    console.warn('[SW] Failed to create HashVerificationStrategy (dev mode?):', error);
+    console.warn(`[SW] Failed to create ${verificationMethod} verification strategy (dev mode?):`, error);
     return null;
   }
 }
@@ -68,9 +87,12 @@ function tryCreateVerificationSettings(
  * Initialize the Wayfinder client with the given configuration.
  */
 export function initializeWayfinder(config: WayfinderConfig): void {
+  const verificationMethod = config.verificationMethod || 'hash';
+
   console.log('[SW] Initializing Wayfinder with config:', {
     enabled: config.enabled,
     strict: config.strict,
+    verificationMethod,
     routingStrategy: config.routingStrategy,
     trustedGateways: config.trustedGateways.length,
     routingGateways: config.routingGateways?.length || 0,
@@ -78,7 +100,7 @@ export function initializeWayfinder(config: WayfinderConfig): void {
 
   currentConfig = config;
 
-  // VERIFICATION gateways: Top-staked gateways used to verify content hashes
+  // VERIFICATION gateways: Top-staked gateways used for content verification
   const verificationGateways = config.trustedGateways.map(url => new URL(url));
   console.log('[SW] Verification gateways:', verificationGateways.map(u => u.hostname));
 
@@ -124,13 +146,14 @@ export function initializeWayfinder(config: WayfinderConfig): void {
     const settings = tryCreateVerificationSettings(
       verificationGateways,
       true, // Always strict internally - we need errors thrown to track failures
+      verificationMethod,
       (event) => {
-        // Hash verification succeeded - just log, counting is handled in manifest-verifier
-        console.log(`[SW] ✓ Hash verified: ${event.txId.slice(0, 8)}...`);
+        // Verification succeeded - just log, counting is handled in manifest-verifier
+        console.log(`[SW] ✓ Verified (${verificationMethod}): ${event.txId.slice(0, 8)}...`);
       },
       (error: Error & { txId?: string }) => {
-        // Hash verification failed - just log, counting is handled in manifest-verifier
-        console.warn(`[SW] ✗ Hash verification failed:`, error);
+        // Verification failed - just log, counting is handled in manifest-verifier
+        console.warn(`[SW] ✗ Verification failed (${verificationMethod}):`, error);
       }
     );
 
@@ -153,6 +176,7 @@ export function initializeWayfinder(config: WayfinderConfig): void {
 
   console.log('[SW] Wayfinder initialized', {
     verificationEnabled: verificationSettings.enabled,
+    verificationMethod: verificationSettings.enabled ? verificationMethod : 'disabled',
     strictMode: config.strict,
   });
 }

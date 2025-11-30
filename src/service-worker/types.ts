@@ -61,6 +61,8 @@ export interface VerificationEvent {
 // Keep old txId field for backwards compatibility
 export type { VerificationEvent as LegacyVerificationEvent };
 
+export type VerificationMethod = 'hash' | 'signature';
+
 export interface WayfinderConfig {
   /** Top-staked gateways used for hash verification */
   trustedGateways: string[];
@@ -73,4 +75,6 @@ export interface WayfinderConfig {
   strict: boolean;
   /** Number of parallel resource verifications (1-20, default 10) */
   concurrency?: number;
+  /** Verification method: 'hash' (fast) or 'signature' (cryptographic) */
+  verificationMethod?: VerificationMethod;
 }

@@ -116,6 +116,7 @@ export class ServiceWorkerMessenger {
     enabled: boolean;
     strict: boolean;
     concurrency?: number;
+    verificationMethod?: 'hash' | 'signature';
   }): Promise<void> {
     await this.send({
       type: 'INIT_WAYFINDER',

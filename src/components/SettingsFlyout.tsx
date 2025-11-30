@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 import { ROUTING_STRATEGY_OPTIONS } from '../utils/constants';
 import { getTrustedGateways } from '../utils/trustedGateways';
-import type { WayfinderConfig } from '../types';
+import type { WayfinderConfig, VerificationMethod } from '../types';
 import packageJson from '../../package.json';
 
 interface SettingsFlyoutProps {
@@ -108,15 +108,13 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
           {/* Content */}
           <div className="flex-1 p-4 space-y-4">
             {/* Routing Strategy */}
-            <div>
-              <label className="block text-sm font-semibold text-text-high mb-2">
-                Routing Strategy
-              </label>
+            <div className="border border-stroke-high rounded-lg p-3 bg-container-L2">
+              <div className="font-medium text-text-high mb-3">Gateway Routing</div>
               <div className="space-y-2">
                 {ROUTING_STRATEGY_OPTIONS.map((option) => (
                   <label
                     key={option.value}
-                    className="flex items-start gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2"
+                    className="flex items-start gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L3 transition-colors"
                   >
                     <input
                       type="radio"
@@ -138,53 +136,30 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                   </label>
                 ))}
               </div>
-            </div>
 
-            {/* Preferred Gateway (conditional) */}
-            {localConfig.routingStrategy === 'preferred' && (
-              <div>
-                <label className="block text-sm font-semibold text-text-high mb-2">
-                  Preferred Gateway URL
-                </label>
-                <input
-                  type="text"
-                  value={localConfig.preferredGateway || ''}
-                  onChange={(e) =>
-                    setLocalConfig({
-                      ...localConfig,
-                      preferredGateway: e.target.value,
-                    })
-                  }
-                  placeholder="https://arweave.net"
-                  className="w-full px-4 py-2 bg-container-L2 border border-stroke-low text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent"
-                />
-                <p className="text-sm text-text-low mt-2">
-                  Enter your preferred gateway URL. This gateway will always be used for all requests (e.g., https://arweave.net, https://g8way.io).
-                </p>
-              </div>
-            )}
-
-            {/* Telemetry */}
-            <div>
-              <label className="flex items-center gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L2 transition-colors bg-container-L2">
-                <input
-                  type="checkbox"
-                  checked={localConfig.telemetryEnabled}
-                  onChange={(e) =>
-                    setLocalConfig({
-                      ...localConfig,
-                      telemetryEnabled: e.target.checked,
-                    })
-                  }
-                  className="w-4 h-4 text-accent-teal-primary rounded focus:ring-accent-teal-primary accent-accent-teal-primary"
-                />
-                <div className="flex-1">
-                  <div className="font-medium text-text-high">Enable Telemetry</div>
-                  <div className="text-sm text-text-low mt-1">
-                    Help improve Wayfinder by sharing anonymous usage data
-                  </div>
+              {/* Preferred Gateway (conditional) */}
+              {localConfig.routingStrategy === 'preferred' && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <label className="block text-sm font-medium text-text-high mb-2">
+                    Preferred Gateway URL
+                  </label>
+                  <input
+                    type="text"
+                    value={localConfig.preferredGateway || ''}
+                    onChange={(e) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        preferredGateway: e.target.value,
+                      })
+                    }
+                    placeholder="https://arweave.net"
+                    className="w-full px-3 py-2 bg-container-L3 border border-stroke-low text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent text-sm"
+                  />
+                  <p className="text-xs text-text-low mt-2">
+                    This gateway will always be used for all requests.
+                  </p>
                 </div>
-              </label>
+              )}
             </div>
 
             {/* Data Verification */}
@@ -212,6 +187,64 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                   </div>
                 </div>
               </label>
+
+              {/* Verification Method (only shown when verification is enabled) */}
+              {localConfig.verificationEnabled && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <div className="text-sm font-medium text-text-high mb-2">
+                    Verification Method
+                  </div>
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L3 transition-colors">
+                      <input
+                        type="radio"
+                        name="verificationMethod"
+                        value="hash"
+                        checked={localConfig.verificationMethod === 'hash'}
+                        onChange={(e) =>
+                          setLocalConfig({
+                            ...localConfig,
+                            verificationMethod: e.target.value as VerificationMethod,
+                          })
+                        }
+                        className="mt-1 w-4 h-4 text-accent-teal-primary focus:ring-accent-teal-primary accent-accent-teal-primary"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-text-high">Hash Verification</div>
+                        <div className="text-xs text-text-low mt-1">
+                          Fast SHA-256 hash comparison. Verifies content matches what trusted gateways report.
+                        </div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 p-2 border border-stroke-low rounded-lg cursor-pointer hover:bg-container-L3 transition-colors">
+                      <input
+                        type="radio"
+                        name="verificationMethod"
+                        value="signature"
+                        checked={localConfig.verificationMethod === 'signature'}
+                        onChange={(e) =>
+                          setLocalConfig({
+                            ...localConfig,
+                            verificationMethod: e.target.value as VerificationMethod,
+                          })
+                        }
+                        className="mt-1 w-4 h-4 text-accent-teal-primary focus:ring-accent-teal-primary accent-accent-teal-primary"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-text-high">
+                          Signature Verification
+                          <span className="ml-2 px-1.5 py-0.5 text-xs bg-semantic-success bg-opacity-20 text-semantic-success rounded">
+                            Most Secure
+                          </span>
+                        </div>
+                        <div className="text-xs text-text-low mt-1">
+                          Cryptographically verifies the original signer's signature. Cannot be spoofed without the private key.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {/* Strict Mode (only shown when verification is enabled) */}
               {localConfig.verificationEnabled && (
@@ -307,10 +340,33 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                     <div className="text-xs text-text-low">No gateways available</div>
                   )}
                   <div className="mt-2 text-xs text-text-low">
-                    Content hashes are verified against these top-staked gateways for integrity.
+                    Content is verified using these top-staked gateways for integrity.
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Telemetry */}
+            <div className="border border-stroke-low rounded-lg p-3 bg-container-L2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={localConfig.telemetryEnabled}
+                  onChange={(e) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      telemetryEnabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 text-accent-teal-primary rounded focus:ring-accent-teal-primary accent-accent-teal-primary"
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-text-high">Enable Telemetry</div>
+                  <div className="text-sm text-text-low mt-1">
+                    Help improve Wayfinder by sharing anonymous usage data
+                  </div>
+                </div>
+              </label>
             </div>
           </div>
 
