@@ -5,6 +5,8 @@ export interface WayfinderConfig {
   preferredGateway?: string;
   telemetryEnabled: boolean;
   verificationEnabled: boolean;
+  /** When true, blocks content display if verification fails (requires user confirmation) */
+  strictVerification: boolean;
 }
 
 export interface WayfinderConfigContextValue {

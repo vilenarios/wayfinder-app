@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 import { ROUTING_STRATEGY_OPTIONS } from '../utils/constants';
+import { getTrustedGateways } from '../utils/trustedGateways';
 import type { WayfinderConfig } from '../types';
 import packageJson from '../../package.json';
 
@@ -12,12 +13,32 @@ interface SettingsFlyoutProps {
 export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
   const { config, updateConfig } = useWayfinderConfig();
   const [localConfig, setLocalConfig] = useState<WayfinderConfig>(config);
+  const [verificationGateways, setVerificationGateways] = useState<string[]>([]);
+  const [loadingGateways, setLoadingGateways] = useState(false);
 
   useEffect(() => {
     // Sync local state with context when settings open or config changes
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalConfig(config);
   }, [config, isOpen]);
+
+  // Fetch verification gateways when settings panel opens and verification is enabled
+  useEffect(() => {
+    if (isOpen && (config.verificationEnabled || localConfig.verificationEnabled)) {
+      setLoadingGateways(true);
+      getTrustedGateways()
+        .then(gateways => {
+          setVerificationGateways(gateways.map(u => u.toString()));
+        })
+        .catch(err => {
+          console.error('Failed to fetch verification gateways:', err);
+          setVerificationGateways([]);
+        })
+        .finally(() => {
+          setLoadingGateways(false);
+        });
+    }
+  }, [isOpen, config.verificationEnabled, localConfig.verificationEnabled]);
 
   const handleSave = () => {
     // Trim the preferred gateway URL before saving
@@ -191,6 +212,71 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                   </div>
                 </div>
               </label>
+
+              {/* Strict Mode (only shown when verification is enabled) */}
+              {localConfig.verificationEnabled && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={localConfig.strictVerification}
+                      onChange={(e) =>
+                        setLocalConfig({
+                          ...localConfig,
+                          strictVerification: e.target.checked,
+                        })
+                      }
+                      className="mt-1 w-4 h-4 text-semantic-error rounded focus:ring-semantic-error accent-semantic-error"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-text-high">Strict Mode</div>
+                      <div className="text-sm text-text-low mt-1">
+                        Block content display when verification fails. You'll be asked to confirm before viewing unverified content.
+                      </div>
+                      <div className="mt-2 text-xs text-semantic-success">
+                        Recommended for maximum security when handling sensitive transactions.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* Show verification gateways when enabled */}
+              {localConfig.verificationEnabled && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <div className="text-xs font-semibold text-text-low mb-2">
+                    Verification Gateways (Top Staked)
+                  </div>
+                  {loadingGateways ? (
+                    <div className="text-xs text-text-low">Loading gateways...</div>
+                  ) : verificationGateways.length > 0 ? (
+                    <div className="space-y-1">
+                      {verificationGateways.map((gateway, index) => (
+                        <div
+                          key={gateway}
+                          className="flex items-center gap-2 text-xs"
+                        >
+                          <span className="text-accent-teal-primary font-mono">#{index + 1}</span>
+                          <a
+                            href={gateway}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-text-high hover:text-accent-teal-primary truncate font-mono"
+                            title={gateway}
+                          >
+                            {gateway.replace('https://', '')}
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-text-low">No gateways available</div>
+                  )}
+                  <div className="mt-2 text-xs text-text-low">
+                    Content hashes are verified against these top-staked gateways for integrity.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

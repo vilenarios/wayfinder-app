@@ -7,7 +7,7 @@ interface VerificationStatusProps {
 
 export function VerificationStatus({ onVerificationEvent }: VerificationStatusProps) {
   const [currentVerification, setCurrentVerification] = useState<{
-    txId: string;
+    identifier: string;
     status: 'started' | 'progress' | 'success' | 'failed';
     progress?: { current: number; total: number };
     error?: string;
@@ -22,8 +22,19 @@ export function VerificationStatus({ onVerificationEvent }: VerificationStatusPr
         // Update local state
         if (verificationEvent.type === 'verification-started') {
           setCurrentVerification({
-            txId: verificationEvent.txId,
+            identifier: verificationEvent.identifier,
             status: 'started',
+            progress: verificationEvent.progress,
+          });
+        } else if (verificationEvent.type === 'manifest-loaded') {
+          // Manifest loaded, we now know total resources
+          setCurrentVerification(prev => prev ? {
+            ...prev,
+            status: 'progress',
+            progress: verificationEvent.progress,
+          } : {
+            identifier: verificationEvent.identifier,
+            status: 'progress',
             progress: verificationEvent.progress,
           });
         } else if (verificationEvent.type === 'verification-progress') {
@@ -32,9 +43,9 @@ export function VerificationStatus({ onVerificationEvent }: VerificationStatusPr
             status: 'progress',
             progress: verificationEvent.progress,
           } : null);
-        } else if (verificationEvent.type === 'verification-success') {
+        } else if (verificationEvent.type === 'verification-complete') {
           setCurrentVerification({
-            txId: verificationEvent.txId,
+            identifier: verificationEvent.identifier,
             status: 'success',
             progress: verificationEvent.progress,
           });
@@ -42,7 +53,7 @@ export function VerificationStatus({ onVerificationEvent }: VerificationStatusPr
           setTimeout(() => setCurrentVerification(null), 3000);
         } else if (verificationEvent.type === 'verification-failed') {
           setCurrentVerification({
-            txId: verificationEvent.txId,
+            identifier: verificationEvent.identifier,
             status: 'failed',
             error: verificationEvent.error,
           });

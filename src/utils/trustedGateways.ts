@@ -22,11 +22,12 @@ export async function getTrustedGateways(): Promise<URL[]> {
     console.log('Fetching top-staked gateways from AR.IO network...');
     const ario = ARIO.mainnet();
 
-    // SDK v3 returns PaginationResult<AoGatewayWithAddress>
+    // Fetch more gateways so we can sort by TOTAL stake (operator + delegated)
+    // The SDK only sorts by individual fields, not combined totals
     const result = await ario.getGateways({
       sortBy: 'operatorStake',
       sortOrder: 'desc',
-      limit: TOP_N_GATEWAYS,
+      limit: 50, // Fetch more to ensure we get the true top by total stake
     });
 
     console.log('Gateways result:', {
@@ -39,30 +40,42 @@ export async function getTrustedGateways(): Promise<URL[]> {
       throw new Error('No gateways returned from AR.IO network');
     }
 
-    // Extract top-staked gateways from the paginated result
-    // Gateway structure: { settings: { fqdn: string }, operatorStake: number, totalDelegatedStake: number, ... }
-    const topGateways = result.items
-      .filter(gateway => {
-        // Only include active gateways
-        return gateway.status === 'joined' && gateway.settings?.fqdn;
-      })
+    // Filter active gateways and calculate total stake
+    const gatewaysWithTotalStake = result.items
+      .filter(gateway => gateway.status === 'joined' && gateway.settings?.fqdn)
       .map(gateway => {
-        const domain = gateway.settings.fqdn;
         const totalStake = (gateway.operatorStake || 0) + (gateway.totalDelegatedStake || 0);
-        console.log(`Gateway ${domain}: operatorStake=${gateway.operatorStake}, delegatedStake=${gateway.totalDelegatedStake}, total=${totalStake}`);
-        return `https://${domain}`;
+        return {
+          domain: gateway.settings.fqdn,
+          operatorStake: gateway.operatorStake || 0,
+          delegatedStake: gateway.totalDelegatedStake || 0,
+          totalStake,
+        };
       });
 
-    if (topGateways.length === 0) {
+    // Sort by TOTAL stake (operator + delegated) descending
+    gatewaysWithTotalStake.sort((a, b) => b.totalStake - a.totalStake);
+
+    // Take top N
+    const topGateways = gatewaysWithTotalStake.slice(0, TOP_N_GATEWAYS);
+
+    // Log the selected gateways
+    topGateways.forEach(gw => {
+      console.log(`Gateway ${gw.domain}: operatorStake=${gw.operatorStake}, delegatedStake=${gw.delegatedStake}, totalStake=${gw.totalStake}`);
+    });
+
+    const gatewayUrls = topGateways.map(gw => `https://${gw.domain}`);
+
+    if (gatewayUrls.length === 0) {
       throw new Error('No active staked gateways found');
     }
 
-    console.log(`Found ${topGateways.length} top-staked gateways:`, topGateways);
+    console.log(`Found ${gatewayUrls.length} top-staked gateways (by total stake):`, gatewayUrls);
 
     // Cache
-    cacheGateways(topGateways);
+    cacheGateways(gatewayUrls);
 
-    return topGateways.map(url => new URL(url));
+    return gatewayUrls.map(url => new URL(url));
   } catch (error) {
     console.error('Failed to fetch staked gateways:', error);
 
@@ -109,7 +122,7 @@ export function clearTrustedGatewayCache(): void {
 
 /**
  * Get a broader pool of gateways for content routing/fetching.
- * This fetches from arweave.net/ar-io/peers which returns many active gateways.
+ * This fetches from arweave.net/ar-io/peers which returns active gateways.
  */
 export async function getRoutingGateways(): Promise<URL[]> {
   try {
@@ -119,18 +132,46 @@ export async function getRoutingGateways(): Promise<URL[]> {
       throw new Error(`Failed to fetch peers: ${response.status}`);
     }
 
-    const peers: string[] = await response.json();
+    const data = await response.json();
 
-    // Filter and convert to URLs
-    const gateways = peers
-      .filter(peer => peer && typeof peer === 'string')
-      .map(peer => {
-        // Peers are typically domain names without protocol
-        if (peer.startsWith('http://') || peer.startsWith('https://')) {
-          return new URL(peer);
+    // Extract gateway URLs from response
+    // Format: { gateways: { "domain:port": { url: "https://...", dataWeight: 50 }, ... } }
+    const gateways: URL[] = [];
+
+    if (data.gateways && typeof data.gateways === 'object') {
+      // Extract URLs from gateway objects
+      for (const gatewayInfo of Object.values(data.gateways)) {
+        const info = gatewayInfo as { url?: string };
+        if (info.url && typeof info.url === 'string') {
+          try {
+            gateways.push(new URL(info.url));
+          } catch {
+            // Skip invalid URLs
+          }
         }
-        return new URL(`https://${peer}`);
-      });
+      }
+      console.log(`Parsed ${gateways.length} gateways from peers endpoint`);
+    } else if (Array.isArray(data)) {
+      // Fallback: handle array format if endpoint changes
+      for (const peer of data) {
+        if (!peer || typeof peer !== 'string') continue;
+        try {
+          if (peer.startsWith('http://') || peer.startsWith('https://')) {
+            gateways.push(new URL(peer));
+          } else {
+            gateways.push(new URL(`https://${peer}`));
+          }
+        } catch {
+          // Skip invalid URLs
+        }
+      }
+    } else {
+      throw new Error('Unexpected response format from peers endpoint');
+    }
+
+    if (gateways.length === 0) {
+      throw new Error('No valid gateways found in peers response');
+    }
 
     // Shuffle for load distribution
     for (let i = gateways.length - 1; i > 0; i--) {

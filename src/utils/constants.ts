@@ -6,6 +6,7 @@ export const DEFAULT_CONFIG: WayfinderConfig = {
   routingStrategy: 'random',
   telemetryEnabled: false,
   verificationEnabled: false,
+  strictVerification: false, // When true, blocks content if verification fails
 };
 
 export const ROUTING_STRATEGY_OPTIONS = [

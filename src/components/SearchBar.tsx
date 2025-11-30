@@ -12,6 +12,8 @@ interface SearchBarProps {
   onOpenSettings: () => void;
   hasResolvedUrl: boolean;
   resolvedUrl: string | null;
+  /** Optional verification badge to display in the toolbar */
+  verificationBadge?: React.ReactNode;
 }
 
 export const SearchBar = memo(function SearchBar({
@@ -25,6 +27,7 @@ export const SearchBar = memo(function SearchBar({
   onOpenSettings,
   hasResolvedUrl,
   resolvedUrl,
+  verificationBadge,
 }: SearchBarProps) {
   const [input, setInput] = useState(currentInput);
   const [error, setError] = useState('');
@@ -283,7 +286,7 @@ export const SearchBar = memo(function SearchBar({
             <>
               {/* Input field with ar:// prefix */}
               <div className="relative w-full">
-                <div className="absolute left-3 md:left-4 top-1/2 -translate-y-1/2 text-text-low font-mono text-xs md:text-sm pointer-events-none select-none">
+                <div className="absolute left-3 md:left-4 top-1/2 -translate-y-1/2 text-text-low font-mono text-sm pointer-events-none select-none">
                   ar://
                 </div>
                 <input
@@ -295,7 +298,7 @@ export const SearchBar = memo(function SearchBar({
                     setError('');
                   }}
                   placeholder="ArNS name or tx ID..."
-                  className={`w-full pl-11 md:pl-16 pr-3 md:pr-4 py-2.5 md:py-3 bg-container-L2 border text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent font-mono text-sm md:text-base ${
+                  className={`w-full pl-14 md:pl-16 pr-3 md:pr-4 py-2.5 md:py-3 bg-container-L2 border text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent font-mono text-sm md:text-base ${
                     error ? 'border-semantic-error' : 'border-stroke-low'
                   }`}
                 />
@@ -357,9 +360,9 @@ export const SearchBar = memo(function SearchBar({
         {/* Gateway URL display - show when URL is resolved */}
         {isSearched && resolvedUrl && (
           <div className="mt-2 md:mt-3 px-2 py-2 bg-container-L2 border border-stroke-low rounded-md">
-            <div className="flex items-start md:items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs">
               <svg
-                className="w-4 h-4 text-icon-low flex-shrink-0 mt-0.5 md:mt-0"
+                className="w-4 h-4 text-icon-low flex-shrink-0"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -381,6 +384,8 @@ export const SearchBar = memo(function SearchBar({
               >
                 {resolvedUrl}
               </a>
+              {/* Verification Badge */}
+              {verificationBadge}
             </div>
           </div>
         )}

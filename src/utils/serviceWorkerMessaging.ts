@@ -114,6 +114,7 @@ export class ServiceWorkerMessenger {
     routingStrategy: string;
     preferredGateway?: string;
     enabled: boolean;
+    strict: boolean;
   }): Promise<void> {
     await this.send({
       type: 'INIT_WAYFINDER',
@@ -127,6 +128,17 @@ export class ServiceWorkerMessenger {
   async clearCache(): Promise<void> {
     await this.send({
       type: 'CLEAR_CACHE',
+    });
+  }
+
+  /**
+   * Clear verification state and cached resources for a specific identifier.
+   * Use this before retrying verification to ensure fresh verification.
+   */
+  async clearVerification(identifier: string): Promise<void> {
+    await this.send({
+      type: 'CLEAR_VERIFICATION',
+      identifier,
     });
   }
 }
