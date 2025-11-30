@@ -71,4 +71,6 @@ export interface WayfinderConfig {
   enabled: boolean;
   /** When true, blocks content if verification fails */
   strict: boolean;
+  /** Number of parallel resource verifications (1-20, default 10) */
+  concurrency?: number;
 }

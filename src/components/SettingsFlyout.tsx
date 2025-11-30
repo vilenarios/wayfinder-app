@@ -241,6 +241,40 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               )}
 
+              {/* Concurrency Setting (only shown when verification is enabled) */}
+              {localConfig.verificationEnabled && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-text-high">
+                      Parallel Verifications
+                    </label>
+                    <span className="text-sm font-mono text-accent-teal-primary">
+                      {localConfig.verificationConcurrency}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="20"
+                    value={localConfig.verificationConcurrency}
+                    onChange={(e) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        verificationConcurrency: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className="w-full h-2 bg-container-L3 rounded-lg appearance-none cursor-pointer accent-accent-teal-primary"
+                  />
+                  <div className="flex justify-between text-xs text-text-low mt-1">
+                    <span>1 (Slower)</span>
+                    <span>20 (Faster)</span>
+                  </div>
+                  <div className="text-xs text-text-low mt-2">
+                    Higher values load faster but may trigger rate limits on some gateways.
+                  </div>
+                </div>
+              )}
+
               {/* Show verification gateways when enabled */}
               {localConfig.verificationEnabled && (
                 <div className="mt-3 pt-3 border-t border-stroke-low">

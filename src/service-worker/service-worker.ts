@@ -20,7 +20,7 @@ import './buffer-polyfill';
 import './fetch-polyfill';
 
 import { initializeWayfinder, isWayfinderReady, getConfig } from './wayfinder-instance';
-import { verifyIdentifier, getVerifiedContent } from './manifest-verifier';
+import { verifyIdentifier, getVerifiedContent, setVerificationConcurrency } from './manifest-verifier';
 import {
   getManifestState,
   isVerificationComplete,
@@ -61,6 +61,10 @@ self.addEventListener('message', (event) => {
     const config: WayfinderConfig = event.data.config;
     console.log('[SW] Initializing with trustedGateways:', config.trustedGateways);
     initializeWayfinder(config);
+    // Apply concurrency setting if provided
+    if (config.concurrency) {
+      setVerificationConcurrency(config.concurrency);
+    }
     event.ports[0]?.postMessage({ type: 'WAYFINDER_READY' });
   }
 

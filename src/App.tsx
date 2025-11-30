@@ -266,6 +266,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
           preferredGateway: config.preferredGateway,
           enabled: true,
           strict: config.strictVerification,
+          concurrency: config.verificationConcurrency,
         });
 
         setSwReady(true);
@@ -278,7 +279,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     }
 
     initServiceWorker();
-  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway, config.strictVerification]);
+  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway, config.strictVerification, config.verificationConcurrency]);
 
   // Listen for service worker messages (routing gateway, verification events)
   useEffect(() => {

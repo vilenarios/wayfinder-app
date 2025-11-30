@@ -23,8 +23,19 @@ import {
 } from './verification-state';
 import { getWayfinder, isWayfinderReady, setSelectedGateway } from './wayfinder-instance';
 
-// Concurrency limit for parallel verification
-const MAX_CONCURRENT_VERIFICATIONS = 5;
+// Default concurrency limit for parallel verification
+const DEFAULT_CONCURRENCY = 10;
+
+// Current concurrency setting (can be updated via config)
+let maxConcurrentVerifications = DEFAULT_CONCURRENCY;
+
+/**
+ * Set the concurrency limit for parallel resource verification.
+ */
+export function setVerificationConcurrency(concurrency: number): void {
+  maxConcurrentVerifications = Math.max(1, Math.min(20, concurrency)); // Clamp between 1-20
+  console.log(`[Verifier] Concurrency set to ${maxConcurrentVerifications}`);
+}
 
 // Detect if identifier is a 43-char Arweave transaction ID
 const TX_ID_REGEX = /^[A-Za-z0-9_-]{43}$/;
@@ -256,7 +267,7 @@ async function verifyAllResources(
     entries.push(['__fallback__', { id: manifest.fallback.id }]);
   }
 
-  console.log(`[Verifier] Verifying ${entries.length} resources with concurrency ${MAX_CONCURRENT_VERIFICATIONS}`);
+  console.log(`[Verifier] Verifying ${entries.length} resources with concurrency ${maxConcurrentVerifications}`);
 
   // Track active and all promises separately for proper concurrency control
   const allResults: Promise<void>[] = [];
@@ -264,7 +275,7 @@ async function verifyAllResources(
 
   for (const [path, entry] of entries) {
     // Wait if we're at the concurrency limit
-    while (activePromises.size >= MAX_CONCURRENT_VERIFICATIONS) {
+    while (activePromises.size >= maxConcurrentVerifications) {
       await Promise.race(activePromises);
     }
 

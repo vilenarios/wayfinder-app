@@ -115,6 +115,7 @@ export class ServiceWorkerMessenger {
     preferredGateway?: string;
     enabled: boolean;
     strict: boolean;
+    concurrency?: number;
   }): Promise<void> {
     await this.send({
       type: 'INIT_WAYFINDER',

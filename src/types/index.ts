@@ -7,6 +7,8 @@ export interface WayfinderConfig {
   verificationEnabled: boolean;
   /** When true, blocks content display if verification fails (requires user confirmation) */
   strictVerification: boolean;
+  /** Number of parallel resource verifications (1-20, default 10) */
+  verificationConcurrency: number;
 }
 
 export interface WayfinderConfigContextValue {

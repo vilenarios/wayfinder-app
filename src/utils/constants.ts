@@ -7,6 +7,7 @@ export const DEFAULT_CONFIG: WayfinderConfig = {
   telemetryEnabled: false,
   verificationEnabled: false,
   strictVerification: false, // When true, blocks content if verification fails
+  verificationConcurrency: 10, // Parallel resource verifications (1-20)
 };
 
 export const ROUTING_STRATEGY_OPTIONS = [
