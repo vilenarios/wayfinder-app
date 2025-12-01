@@ -315,11 +315,14 @@ async function fetchAndVerifyRawContent(
 /**
  * Verify and cache a single resource by txId.
  * Records verification success/failure directly (not via Wayfinder callbacks).
+ *
+ * If the primary gateway fails, retries with fallback gateways.
  */
 async function verifyAndCacheResource(
   identifier: string,
   txId: string,
-  path: string
+  path: string,
+  fallbackGateways: string[]
 ): Promise<void> {
   if (!isWayfinderReady()) {
     throw new Error('Wayfinder not ready');
@@ -333,6 +336,7 @@ async function verifyAndCacheResource(
   const wayfinder = getWayfinder();
   const arUrl = `ar://${txId}`;
 
+  // First attempt with the primary (locked) gateway
   try {
     const response = await wayfinder.request(arUrl);
     const data = await response.arrayBuffer();
@@ -345,22 +349,66 @@ async function verifyAndCacheResource(
 
     verifiedCache.set(txId, { contentType, data, headers });
     recordResourceVerified(identifier, txId, path);
+    return;
 
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(TAG, `Failed: ${path} - ${errorMsg}`);
-    recordResourceFailed(identifier, txId, path, errorMsg);
-    throw error;
+  } catch {
+    logger.debug(TAG, `Primary gateway failed for ${path}, trying fallbacks...`);
+    // Continue to fallback attempts
   }
+
+  // Fallback: Try other gateways directly (bypassing the locked gateway)
+  // This handles cases where the primary gateway has temporary issues with specific resources
+  let lastError: Error | null = null;
+
+  for (const gateway of fallbackGateways) {
+    // Skip if this is the same as the locked gateway (we already tried it)
+    const gatewayBase = gateway.replace(/\/+$/, '');
+
+    try {
+      // Temporarily clear the selected gateway to allow Wayfinder to use this specific one
+      setSelectedGateway(gatewayBase);
+
+      const response = await wayfinder.request(arUrl);
+      const data = await response.arrayBuffer();
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+
+      verifiedCache.set(txId, { contentType, data, headers });
+      recordResourceVerified(identifier, txId, path);
+
+      logger.debug(TAG, `Fallback succeeded: ${path} from ${new URL(gatewayBase).hostname}`);
+      return;
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      logger.debug(TAG, `Fallback ${new URL(gatewayBase).hostname} failed for ${path}`);
+      // Continue to next fallback
+    }
+  }
+
+  // All attempts failed
+  const errorMsg = lastError?.message || 'All gateways failed';
+  logger.warn(TAG, `Failed: ${path} - ${errorMsg}`);
+  recordResourceFailed(identifier, txId, path, errorMsg);
+  throw lastError || new Error(errorMsg);
 }
 
 /**
  * Verify all resources in a manifest with concurrency control.
  * Returns true if manifest was empty (caller should trigger completion).
+ *
+ * @param primaryGateway - The primary gateway to use for all resources
+ * @param fallbackGateways - Backup gateways to try if primary fails for a resource
  */
 async function verifyAllResources(
   identifier: string,
-  manifest: ArweaveManifest
+  manifest: ArweaveManifest,
+  primaryGateway: string,
+  fallbackGateways: string[]
 ): Promise<boolean> {
   const entries = Object.entries(manifest.paths);
 
@@ -374,7 +422,12 @@ async function verifyAllResources(
     return true;
   }
 
-  logger.info(TAG, `Verifying ${entries.length} resources`);
+  logger.info(TAG, `Verifying ${entries.length} resources (${fallbackGateways.length} fallback gateways available)`);
+
+  // Filter out the primary gateway from fallbacks to avoid duplicate attempts
+  const filteredFallbacks = fallbackGateways.filter(g =>
+    g.replace(/\/+$/, '') !== primaryGateway.replace(/\/+$/, '')
+  );
 
   const allResults: Promise<void>[] = [];
   const activePromises = new Set<Promise<void>>();
@@ -386,8 +439,12 @@ async function verifyAllResources(
 
     // Handle both formats: { id: string } and raw string txId
     const txId = typeof entry === 'string' ? entry : entry.id;
-    const promise = verifyAndCacheResource(identifier, txId, path)
-      .catch(() => { /* Errors already logged */ });
+
+    const promise = (async () => {
+      // Ensure primary gateway is set before each resource verification
+      setSelectedGateway(primaryGateway);
+      await verifyAndCacheResource(identifier, txId, path, filteredFallbacks);
+    })().catch(() => { /* Errors already logged */ });
 
     activePromises.add(promise);
     promise.finally(() => activePromises.delete(promise));
@@ -480,7 +537,12 @@ export async function verifyIdentifier(
 
     // Manifest case - manifest itself is now verified, proceed to verify resources
     setManifestLoaded(identifier, manifest!);
-    const wasEmpty = await verifyAllResources(identifier, manifest!);
+    const wasEmpty = await verifyAllResources(
+      identifier,
+      manifest!,
+      workingGateway,
+      shuffledGateways // Pass all gateways as potential fallbacks
+    );
 
     // For empty manifests, manually trigger completion since no resources will do it
     if (wasEmpty) {
