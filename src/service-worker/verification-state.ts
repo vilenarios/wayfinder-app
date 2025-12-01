@@ -18,6 +18,27 @@ const TAG = 'State';
 // Active manifest verifications keyed by identifier (ArNS name or txId)
 const manifestStates = new Map<string, ManifestVerificationState>();
 
+// Currently active identifier (for intercepting absolute path requests)
+// This tracks which identifier's content is currently being served in the iframe
+let activeIdentifier: string | null = null;
+
+/**
+ * Set the currently active identifier.
+ * Used to intercept absolute path requests from the iframe.
+ */
+export function setActiveIdentifier(identifier: string | null): void {
+  activeIdentifier = identifier;
+  if (identifier) {
+    logger.debug(TAG, `Active identifier: ${identifier}`);
+  }
+}
+
+/**
+ * Get the currently active identifier.
+ */
+export function getActiveIdentifier(): string | null {
+  return activeIdentifier;
+}
 
 /**
  * Broadcast verification event to all clients.
@@ -281,6 +302,15 @@ export function getTxIdForPath(identifier: string, path: string): string | null 
   }
 
   return null;
+}
+
+/**
+ * Check if a path exists in the active identifier's manifest.
+ * Returns the txId if found, null otherwise.
+ */
+export function getActiveTxIdForPath(path: string): string | null {
+  if (!activeIdentifier) return null;
+  return getTxIdForPath(activeIdentifier, path);
 }
 
 /**

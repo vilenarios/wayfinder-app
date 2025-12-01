@@ -1,12 +1,18 @@
 /**
  * Manifest-first verification orchestrator.
  *
- * Handles the complete flow:
- * 1. Resolve ArNS name to txId (or use txId directly)
- * 2. Fetch raw content and check if it's a manifest
- * 3. If manifest: pre-verify all resources
- * 4. Cache verified content
- * 5. Serve from cache
+ * SECURITY MODEL:
+ * - ArNS names are resolved via trusted gateways with consensus checking
+ * - Manifest content is cryptographically verified BEFORE trusting path->txId mappings
+ * - All resources are verified against trusted gateways before serving
+ *
+ * Flow:
+ * 1. Resolve ArNS name to txId via trusted gateways (consensus required)
+ * 2. Select a responsive routing gateway
+ * 3. Fetch AND VERIFY manifest content via Wayfinder (hash/signature check)
+ * 4. Parse manifest only AFTER verification passes
+ * 5. Verify all resources in manifest
+ * 6. Serve only verified content from cache
  */
 
 import type { ArweaveManifest, ManifestCheckResult, SwWayfinderConfig } from './types';
@@ -120,16 +126,16 @@ export async function resolveArnsToTxId(
 }
 
 /**
- * Fetch RAW content from gateways to check if it's a manifest.
- * Tries gateways one by one until one succeeds.
- * Returns the working gateway so all resources can use the same one.
+ * Find a working gateway by trying each one until one responds.
+ * This is a lightweight check (HEAD request) to find a responsive gateway
+ * before committing to verified fetches.
  */
-export async function fetchAndCheckManifest(
+async function selectWorkingGateway(
   txId: string,
   gateways: string[]
-): Promise<ManifestCheckResult & { workingGateway: string }> {
+): Promise<string> {
   if (gateways.length === 0) {
-    throw new Error('No gateways available for manifest fetch');
+    throw new Error('No gateways available');
   }
 
   let lastError: Error | null = null;
@@ -139,37 +145,14 @@ export async function fetchAndCheckManifest(
     const rawUrl = `${gatewayBase}/raw/${txId}`;
 
     try {
-      const response = await fetch(rawUrl);
+      // Use HEAD request to check if gateway is responsive without downloading content
+      const response = await fetch(rawUrl, { method: 'HEAD' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const contentType = response.headers.get('content-type') || '';
-      const rawData = await response.arrayBuffer();
-
-      // Check if it's a manifest by content-type
-      if (contentType.includes('application/x.arweave-manifest+json')) {
-        const text = new TextDecoder().decode(rawData);
-        const manifest = JSON.parse(text) as ArweaveManifest;
-        logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
-        return { isManifest: true, manifest, rawData, contentType, workingGateway: gatewayBase };
-      }
-
-      // Try parsing as JSON manifest
-      try {
-        const text = new TextDecoder().decode(rawData);
-        const parsed = JSON.parse(text);
-        if (parsed.manifest === 'arweave/paths' && parsed.paths) {
-          const manifest = parsed as ArweaveManifest;
-          logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
-          return { isManifest: true, manifest, rawData, contentType, workingGateway: gatewayBase };
-        }
-      } catch {
-        // Not JSON, not a manifest
-      }
-
-      logger.debug(TAG, 'Single file mode');
-      return { isManifest: false, rawData, contentType, workingGateway: gatewayBase };
+      logger.debug(TAG, `Selected gateway: ${new URL(gatewayBase).hostname}`);
+      return gatewayBase;
 
     } catch (error) {
       logger.debug(TAG, `Gateway failed: ${new URL(gatewayBase).hostname}`);
@@ -178,6 +161,155 @@ export async function fetchAndCheckManifest(
   }
 
   throw new Error(`All gateways failed. Last error: ${lastError?.message}`);
+}
+
+/**
+ * Compute SHA-256 hash of data and return as base64url string.
+ */
+async function computeHash(data: ArrayBuffer): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = new Uint8Array(hashBuffer);
+  // Convert to base64url (Arweave format)
+  let binary = '';
+  for (let i = 0; i < hashArray.length; i++) {
+    binary += String.fromCharCode(hashArray[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Verify a computed hash against trusted gateways.
+ * Fetches the hash from ONE trusted gateway (trying each until one succeeds).
+ * This is more efficient than fetching from all gateways.
+ *
+ * Note: We only need ONE trusted gateway to agree because:
+ * 1. The txId itself is content-addressed (hash of the data)
+ * 2. If the routing gateway served wrong content, the hash won't match
+ * 3. We're verifying our computed hash against a trusted source
+ */
+async function verifyHashAgainstTrustedGateway(
+  txId: string,
+  computedHash: string,
+  trustedGateways: string[]
+): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (const gateway of trustedGateways) {
+    const gatewayBase = gateway.replace(/\/+$/, '');
+
+    try {
+      // First try HEAD request to get hash from header (most efficient)
+      const headResponse = await fetch(`${gatewayBase}/raw/${txId}`, { method: 'HEAD' });
+      if (!headResponse.ok) {
+        throw new Error(`HTTP ${headResponse.status}`);
+      }
+
+      // Try to get hash from header
+      const hashHeader = headResponse.headers.get('x-ar-io-data-hash') ||
+                         headResponse.headers.get('x-arweave-data-hash');
+
+      if (hashHeader) {
+        if (hashHeader === computedHash) {
+          logger.debug(TAG, `Hash verified via header from ${new URL(gatewayBase).hostname}`);
+          return; // Success!
+        } else {
+          throw new Error(`Hash mismatch: computed=${computedHash.slice(0, 12)}..., trusted=${hashHeader.slice(0, 12)}...`);
+        }
+      }
+
+      // No hash header - need to fetch and hash the content
+      const fullResponse = await fetch(`${gatewayBase}/raw/${txId}`);
+      if (!fullResponse.ok) {
+        throw new Error(`HTTP ${fullResponse.status}`);
+      }
+
+      const data = await fullResponse.arrayBuffer();
+      const trustedHash = await computeHash(data);
+
+      if (trustedHash === computedHash) {
+        logger.debug(TAG, `Hash verified via content from ${new URL(gatewayBase).hostname}`);
+        return; // Success!
+      } else {
+        throw new Error(`Hash mismatch: computed=${computedHash.slice(0, 12)}..., trusted=${trustedHash.slice(0, 12)}...`);
+      }
+
+    } catch (error) {
+      logger.debug(TAG, `Trusted gateway ${new URL(gatewayBase).hostname} failed: ${error instanceof Error ? error.message : error}`);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      // Continue to next gateway
+    }
+  }
+
+  throw new Error(`All trusted gateways failed to verify hash. Last error: ${lastError?.message}`);
+}
+
+/**
+ * Fetch and verify manifest/content from the selected routing gateway.
+ *
+ * SECURITY: This fetches RAW content (not resolved through manifest paths)
+ * and verifies its hash against trusted gateways before trusting it.
+ *
+ * For manifests: We need the raw manifest JSON, not the resolved index.html.
+ * For single files: The raw content IS the file content.
+ */
+async function fetchAndVerifyRawContent(
+  txId: string,
+  routingGateway: string,
+  trustedGateways: string[]
+): Promise<ManifestCheckResult> {
+  const gatewayBase = routingGateway.replace(/\/+$/, '');
+  const rawUrl = `${gatewayBase}/raw/${txId}`;
+
+  logger.debug(TAG, `Fetching raw content: ${txId.slice(0, 8)}... from ${new URL(gatewayBase).hostname}`);
+
+  // Fetch raw content from routing gateway
+  const response = await fetch(rawUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch raw content: HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const rawData = await response.arrayBuffer();
+
+  // Compute hash of fetched content
+  const computedHash = await computeHash(rawData);
+  logger.debug(TAG, `Computed hash: ${computedHash.slice(0, 12)}...`);
+
+  // Verify hash against trusted gateways
+  await verifyHashAgainstTrustedGateway(txId, computedHash, trustedGateways);
+
+  logger.debug(TAG, `Verified: ${txId.slice(0, 8)}...`);
+
+  // Cache the verified content
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  verifiedCache.set(txId, { contentType, data: rawData, headers });
+
+  // Check if it's a manifest by content-type
+  if (contentType.includes('application/x.arweave-manifest+json')) {
+    const text = new TextDecoder().decode(rawData);
+    const manifest = JSON.parse(text) as ArweaveManifest;
+    logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
+    return { isManifest: true, manifest, rawData, contentType };
+  }
+
+  // Try parsing as JSON manifest (some may not have correct content-type)
+  try {
+    const text = new TextDecoder().decode(rawData);
+    const parsed = JSON.parse(text);
+    if (parsed.manifest === 'arweave/paths' && parsed.paths) {
+      const manifest = parsed as ArweaveManifest;
+      logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
+      return { isManifest: true, manifest, rawData, contentType };
+    }
+  } catch {
+    // Not JSON, not a manifest
+  }
+
+  logger.debug(TAG, 'Single file mode');
+  return { isManifest: false, rawData, contentType };
 }
 
 /**
@@ -290,8 +422,17 @@ export async function verifyIdentifier(
       ? config.routingGateways
       : config.trustedGateways;
 
-    const { isManifest, manifest, workingGateway } = await fetchAndCheckManifest(txId, routingGateways);
+    // Shuffle gateways for load distribution and to avoid always hitting the same gateway on retry
+    const shuffledGateways = [...routingGateways];
+    for (let i = shuffledGateways.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledGateways[i], shuffledGateways[j]] = [shuffledGateways[j], shuffledGateways[i]];
+    }
 
+    // Step 1: Find a responsive gateway (lightweight HEAD request)
+    const workingGateway = await selectWorkingGateway(txId, shuffledGateways);
+
+    // Step 2: Lock in this gateway for all subsequent requests
     setSelectedGateway(workingGateway);
 
     broadcastEvent({
@@ -301,7 +442,18 @@ export async function verifyIdentifier(
       gatewayUrl: workingGateway,
     });
 
+    // Step 3: Fetch AND VERIFY the raw manifest/content
+    // SECURITY: This fetches raw content (not resolved through manifest paths)
+    // and verifies its hash against trusted gateways before trusting it.
+    // This prevents a malicious routing gateway from serving a forged manifest.
+    const { isManifest, manifest } = await fetchAndVerifyRawContent(
+      txId,
+      workingGateway,
+      config.trustedGateways
+    );
+
     if (!isManifest) {
+      // Single file - already verified and cached by fetchAndVerifyRawContent
       const singleFileManifest: ArweaveManifest = {
         manifest: 'arweave/paths',
         version: '0.2.0',
@@ -310,10 +462,13 @@ export async function verifyIdentifier(
       };
 
       setManifestLoaded(identifier, singleFileManifest);
-      await verifyAndCacheResource(identifier, txId, 'index');
+      // Record as verified - this triggers completeVerification automatically
+      // since verifiedResources (1) >= totalResources (1)
+      recordResourceVerified(identifier, txId, 'index');
       return;
     }
 
+    // Manifest case - manifest itself is now verified, proceed to verify resources
     setManifestLoaded(identifier, manifest!);
     const wasEmpty = await verifyAllResources(identifier, manifest!);
 

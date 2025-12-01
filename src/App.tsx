@@ -375,7 +375,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
   }, [config.verificationEnabled, config.strictVerification, userBypassedVerification]);
 
-  const handleSearch = useCallback((input: string) => {
+  const handleSearch = useCallback(async (input: string) => {
     setSearchInput(input);
     setIsSearched(true);
     setIsCollapsed(false); // Expand when doing a new search
@@ -390,11 +390,21 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setShowBlockedModal(false);
     setUserBypassedVerification(false);
 
+    // Clear verification state in service worker so it re-verifies fresh
+    // This prevents stale cached verification from being reused
+    if (config.verificationEnabled && input) {
+      try {
+        await swMessenger.clearVerification(input);
+      } catch {
+        // Non-critical - verification will still work
+      }
+    }
+
     // Update URL with search query
     const url = new URL(window.location.href);
     url.searchParams.set('q', input);
     window.history.pushState({}, '', url.toString());
-  }, []);
+  }, [config.verificationEnabled]);
 
   const handleRetry = useCallback(async () => {
     // Increment retry attempts

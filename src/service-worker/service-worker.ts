@@ -27,6 +27,9 @@ import {
   isVerificationInProgress,
   broadcastEvent,
   clearManifestState,
+  setActiveIdentifier,
+  getActiveIdentifier,
+  getActiveTxIdForPath,
 } from './verification-state';
 import { verifiedCache } from './verified-cache';
 import { logger } from './logger';
@@ -87,6 +90,10 @@ self.addEventListener('message', (event) => {
         verifiedCache.clearForManifest(txIds);
       }
       clearManifestState(identifier);
+      // Clear active identifier if it matches
+      if (getActiveIdentifier() === identifier) {
+        setActiveIdentifier(null);
+      }
       logger.info(TAG, `Cleared verification for: ${identifier}`);
     }
     event.ports[0]?.postMessage({ type: 'VERIFICATION_CLEARED' });
@@ -100,11 +107,26 @@ self.addEventListener('message', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Only intercept /ar-proxy/ requests
+  // Primary: Intercept /ar-proxy/ requests
   if (url.pathname.startsWith('/ar-proxy/')) {
     logger.debug(TAG, `Proxy request: ${url.pathname}`);
     event.respondWith(handleArweaveProxy(event.request));
     return;
+  }
+
+  // Secondary: Intercept absolute path requests that match the active identifier's manifest
+  // This handles apps that use absolute paths like "/assets/foo.js" instead of relative paths
+  const activeId = getActiveIdentifier();
+  if (activeId && isVerificationComplete(activeId)) {
+    // Check if this path exists in the active manifest
+    const path = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
+    const txId = getActiveTxIdForPath(path);
+
+    if (txId) {
+      logger.debug(TAG, `Absolute path intercept: ${url.pathname} → ${activeId}`);
+      event.respondWith(serveFromCache(activeId, path));
+      return;
+    }
   }
 
   // Pass through all other requests
@@ -140,18 +162,24 @@ async function handleArweaveProxy(request: Request): Promise<Response> {
 
     if (complete) {
       logger.debug(TAG, `Serving cached: ${identifier}/${resourcePath || 'index'}`);
+      // Set as active so we can intercept absolute path requests from this app
+      setActiveIdentifier(identifier);
       return serveFromCache(identifier, resourcePath);
     }
 
     if (inProgress) {
       logger.debug(TAG, `Waiting for verification: ${identifier}`);
       await waitForVerification(identifier);
+      // Set as active so we can intercept absolute path requests from this app
+      setActiveIdentifier(identifier);
       return serveFromCache(identifier, resourcePath);
     }
 
     // Start new verification
     logger.info(TAG, `Starting verification: ${identifier}`);
     await startVerification(identifier, config);
+    // Set as active so we can intercept absolute path requests from this app
+    setActiveIdentifier(identifier);
     return serveFromCache(identifier, resourcePath);
 
   } catch (error) {
