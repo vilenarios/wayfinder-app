@@ -36,6 +36,9 @@ const TAG = 'Verifier';
 // Default concurrency limit for parallel verification
 const DEFAULT_CONCURRENCY = 10;
 
+// Timeout for individual gateway requests (ArNS resolution, gateway selection)
+const GATEWAY_TIMEOUT_MS = 10000; // 10 seconds
+
 // Current concurrency setting (can be updated via config)
 let maxConcurrentVerifications = DEFAULT_CONCURRENCY;
 
@@ -79,6 +82,7 @@ export async function resolveArnsToTxId(
       const response = await fetch(arnsUrl, {
         method: 'HEAD',
         headers: { 'Accept': '*/*' },
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -145,8 +149,11 @@ async function selectWorkingGateway(
     const rawUrl = `${gatewayBase}/raw/${txId}`;
 
     try {
-      // Use HEAD request to check if gateway is responsive without downloading content
-      const response = await fetch(rawUrl, { method: 'HEAD' });
+      // Use HEAD request with timeout to check if gateway is responsive
+      const response = await fetch(rawUrl, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -155,7 +162,9 @@ async function selectWorkingGateway(
       return gatewayBase;
 
     } catch (error) {
-      logger.debug(TAG, `Gateway failed: ${new URL(gatewayBase).hostname}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
+      logger.debug(TAG, `Gateway ${isTimeout ? 'timeout' : 'failed'}: ${new URL(gatewayBase).hostname} - ${errMsg}`);
       lastError = error instanceof Error ? error : new Error(String(error));
     }
   }
@@ -199,7 +208,10 @@ async function verifyHashAgainstTrustedGateway(
 
     try {
       // First try HEAD request to get hash from header (most efficient)
-      const headResponse = await fetch(`${gatewayBase}/raw/${txId}`, { method: 'HEAD' });
+      const headResponse = await fetch(`${gatewayBase}/raw/${txId}`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+      });
       if (!headResponse.ok) {
         throw new Error(`HTTP ${headResponse.status}`);
       }
@@ -218,7 +230,9 @@ async function verifyHashAgainstTrustedGateway(
       }
 
       // No hash header - need to fetch and hash the content
-      const fullResponse = await fetch(`${gatewayBase}/raw/${txId}`);
+      const fullResponse = await fetch(`${gatewayBase}/raw/${txId}`, {
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+      });
       if (!fullResponse.ok) {
         throw new Error(`HTTP ${fullResponse.status}`);
       }
@@ -263,7 +277,9 @@ async function fetchAndVerifyRawContent(
   logger.debug(TAG, `Fetching raw content: ${txId.slice(0, 8)}... from ${new URL(gatewayBase).hostname}`);
 
   // Fetch raw content from routing gateway
-  const response = await fetch(rawUrl);
+  const response = await fetch(rawUrl, {
+    signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch raw content: HTTP ${response.status}`);
   }
@@ -370,7 +386,9 @@ async function verifyAndCacheResource(
     try {
       // Fetch directly from this gateway (bypassing Wayfinder's routing)
       const rawUrl = `${gatewayBase}/raw/${txId}`;
-      const response = await fetch(rawUrl);
+      const response = await fetch(rawUrl, {
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);

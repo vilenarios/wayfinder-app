@@ -1,14 +1,15 @@
 /**
  * Wayfinder client instance for service worker.
  *
- * Creates and manages the Wayfinder client with:
- * - Verification strategy (hash or signature) using top-staked gateways
- * - Routing strategy using broader gateway pool
+ * Creates and manages the Wayfinder client for routing/fetching only.
+ * Verification is handled separately by manifest-verifier.ts using our own
+ * hash verification logic (verifyHashAgainstTrustedGateway) for quieter logs
+ * and more control.
  */
 
-import { createWayfinderClient, HashVerificationStrategy, SignatureVerificationStrategy, createRoutingStrategy } from '@ar.io/wayfinder-core';
-import type { Wayfinder, VerificationStrategy } from '@ar.io/wayfinder-core';
-import type { SwWayfinderConfig, VerificationMethod } from './types';
+import { createWayfinderClient, createRoutingStrategy } from '@ar.io/wayfinder-core';
+import type { Wayfinder } from '@ar.io/wayfinder-core';
+import type { SwWayfinderConfig } from './types';
 import { logger } from './logger';
 // Note: Verification counting is handled in manifest-verifier.ts, not via Wayfinder callbacks
 
@@ -83,55 +84,6 @@ const quietWayfinderLogger = {
 };
 
 /**
- * Create a verification strategy based on the specified method.
- * - 'hash': Fast SHA-256 hash comparison (default)
- * - 'signature': Cryptographic signature verification (most secure)
- */
-function createVerificationStrategyFromMethod(
-  method: VerificationMethod,
-  trustedGateways: URL[]
-): VerificationStrategy {
-  switch (method) {
-    case 'signature':
-      logger.debug(TAG, 'Using SignatureVerificationStrategy');
-      return new SignatureVerificationStrategy({ trustedGateways, logger: quietWayfinderLogger });
-    case 'hash':
-    default:
-      logger.debug(TAG, 'Using HashVerificationStrategy');
-      return new HashVerificationStrategy({ trustedGateways, logger: quietWayfinderLogger });
-  }
-}
-
-/**
- * Try to create verification settings with the specified strategy.
- * Returns null if crypto is not available (dev mode).
- */
-function tryCreateVerificationSettings(
-  trustedGateways: URL[],
-  strict: boolean,
-  verificationMethod: VerificationMethod,
-  onSuccess: (event: { txId: string }) => void,
-  onFailure: (error: Error) => void
-) {
-  try {
-    const strategy = createVerificationStrategyFromMethod(verificationMethod, trustedGateways);
-
-    return {
-      enabled: true,
-      strategy,
-      strict,
-      events: {
-        onVerificationSucceeded: onSuccess,
-        onVerificationFailed: onFailure,
-      },
-    };
-  } catch (error) {
-    logger.warn(TAG, `Strategy creation failed (${verificationMethod}):`, error);
-    return null;
-  }
-}
-
-/**
  * Initialize the Wayfinder client with the given configuration.
  */
 export function initializeWayfinder(config: SwWayfinderConfig): void {
@@ -141,15 +93,11 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
 
   currentConfig = config;
 
-  // VERIFICATION gateways: Top-staked gateways used for content verification
-  const verificationGateways = config.trustedGateways.map(url => new URL(url));
-  logger.debug(TAG, `Verification gateways:`, verificationGateways.map(u => u.hostname));
-
   // ROUTING gateways: Broader pool for load distribution
-  // These are separate from verification gateways
+  // Verification gateways are handled separately by manifest-verifier.ts
   const routingGateways = config.routingGateways && config.routingGateways.length > 0
     ? config.routingGateways.map(url => new URL(url))
-    : verificationGateways;
+    : config.trustedGateways.map(url => new URL(url));
   logger.debug(TAG, `Routing gateways: ${routingGateways.length}`);
 
   // Create gateways provider for routing
@@ -177,41 +125,15 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     gatewaysProvider,
   });
 
-  // Try to create verification settings
-  let verificationSettings: ReturnType<typeof tryCreateVerificationSettings> | { enabled: false } = { enabled: false };
-
-  if (config.enabled) {
-    // Always use strict mode internally so wayfinder.request() throws on verification failure.
-    // This ensures we accurately track verification status.
-    // The user's "strict verification" setting only controls whether to BLOCK content display,
-    // not whether to accurately detect verification failures.
-    const settings = tryCreateVerificationSettings(
-      verificationGateways,
-      true, // Always strict internally - we need errors thrown to track failures
-      verificationMethod,
-      (event) => {
-        // Verification succeeded - just log, counting is handled in manifest-verifier
-        logger.debug(TAG, `✓ ${event.txId.slice(0, 8)}...`);
-      },
-      (error: Error & { txId?: string }) => {
-        // Verification failed - just log, counting is handled in manifest-verifier
-        logger.debug(TAG, `✗ Verification failed:`, error.message);
-      }
-    );
-
-    if (settings) {
-      verificationSettings = settings;
-    } else {
-      logger.warn(TAG, 'Verification disabled - crypto not available');
-    }
-  }
-
+  // NOTE: We intentionally disable wayfinder-core's built-in verification.
+  // Our manifest-verifier.ts handles verification using verifyHashAgainstTrustedGateway()
+  // which is quieter and gives us more control. Wayfinder is only used for routing/fetching.
   wayfinderInstance = createWayfinderClient({
     logger: quietWayfinderLogger,
     routingSettings: {
       strategy: routingStrategy,
     },
-    verificationSettings,
+    verificationSettings: { enabled: false },
     telemetrySettings: {
       enabled: false,
     },
@@ -224,7 +146,7 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     initializationPromise = null;
   }
 
-  logger.info(TAG, `Ready: verification=${verificationSettings.enabled ? verificationMethod : 'disabled'}, strict=${config.strict}`);
+  logger.info(TAG, `Ready: verification=${config.enabled ? verificationMethod : 'disabled'}, strict=${config.strict}`);
 }
 
 /**
