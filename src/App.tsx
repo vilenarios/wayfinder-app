@@ -607,13 +607,20 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
                 />
               )}
 
-              {/* Show iframe once verification completes (or partial/failed in non-strict mode) */}
-              {/* Note: Also don't show iframe when idle - verification hasn't started yet */}
-              {verificationState !== 'verifying' && verificationState !== 'idle' && !shouldBlockContent && (
+              {/*
+                iframe MUST always be rendered to trigger the service worker.
+                Hide it visually during verification, show once complete.
+                The iframe src triggers the /ar-proxy/ fetch which starts verification.
+              */}
+              {!shouldBlockContent && (
                 <iframe
                   key={`${searchInput}-${searchCounter}`}
                   src={`/ar-proxy/${searchInput}/`}
-                  className="w-full h-full border-0"
+                  className={`w-full h-full border-0 ${
+                    verificationState === 'verifying' || verificationState === 'idle'
+                      ? 'invisible absolute'
+                      : ''
+                  }`}
                   sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
                   title={`Verified content for ${searchInput}`}
                 />
