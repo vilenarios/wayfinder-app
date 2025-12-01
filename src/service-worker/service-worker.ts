@@ -116,16 +116,26 @@ self.addEventListener('fetch', (event) => {
 
   // Secondary: Intercept absolute path requests that match the active identifier's manifest
   // This handles apps that use absolute paths like "/assets/foo.js" instead of relative paths
-  const activeId = getActiveIdentifier();
-  if (activeId && isVerificationComplete(activeId)) {
-    // Check if this path exists in the active manifest
-    const path = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
-    const txId = getActiveTxIdForPath(path);
+  //
+  // IMPORTANT: Only intercept if the request originated from the ar-proxy iframe.
+  // We check this via the Referer header - requests from within the iframe will have
+  // a referer containing "/ar-proxy/". This prevents us from intercepting requests
+  // for the host Wayfinder app itself (e.g., navigating back to the homepage).
+  const referer = event.request.headers.get('referer') || '';
+  const isFromArProxy = referer.includes('/ar-proxy/');
 
-    if (txId) {
-      logger.debug(TAG, `Absolute path intercept: ${url.pathname} → ${activeId}`);
-      event.respondWith(serveFromCache(activeId, path));
-      return;
+  if (isFromArProxy) {
+    const activeId = getActiveIdentifier();
+    if (activeId && isVerificationComplete(activeId)) {
+      // Check if this path exists in the active manifest
+      const path = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
+      const txId = getActiveTxIdForPath(path);
+
+      if (txId) {
+        logger.debug(TAG, `Absolute path intercept: ${url.pathname} → ${activeId}`);
+        event.respondWith(serveFromCache(activeId, path));
+        return;
+      }
     }
   }
 
