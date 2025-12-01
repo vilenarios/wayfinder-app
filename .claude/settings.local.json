@@ -7,7 +7,12 @@
       "Bash(npm run preview:*)",
       "Bash(git add:*)",
       "Bash(npm install:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(npm run lint)",
+      "Bash(curl:*)",
+      "Bash(git commit:*)",
+      "Bash(npm ls:*)",
+      "Bash(git push)"
     ],
     "deny": [],
     "ask": []
