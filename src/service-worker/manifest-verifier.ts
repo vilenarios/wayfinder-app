@@ -317,12 +317,15 @@ async function fetchAndVerifyRawContent(
  * Records verification success/failure directly (not via Wayfinder callbacks).
  *
  * If the primary gateway fails, retries with fallback gateways.
+ * Uses direct fetch + hash verification for fallbacks to avoid race conditions
+ * with the global selectedGateway state during concurrent verification.
  */
 async function verifyAndCacheResource(
   identifier: string,
   txId: string,
   path: string,
-  fallbackGateways: string[]
+  fallbackGateways: string[],
+  trustedGateways: string[]
 ): Promise<void> {
   if (!isWayfinderReady()) {
     throw new Error('Wayfinder not ready');
@@ -336,7 +339,7 @@ async function verifyAndCacheResource(
   const wayfinder = getWayfinder();
   const arUrl = `ar://${txId}`;
 
-  // First attempt with the primary (locked) gateway
+  // First attempt with the primary (locked) gateway via Wayfinder
   try {
     const response = await wayfinder.request(arUrl);
     const data = await response.arrayBuffer();
@@ -356,22 +359,30 @@ async function verifyAndCacheResource(
     // Continue to fallback attempts
   }
 
-  // Fallback: Try other gateways directly (bypassing the locked gateway)
-  // This handles cases where the primary gateway has temporary issues with specific resources
+  // Fallback: Fetch directly from other gateways and verify hash ourselves
+  // This avoids race conditions with the global selectedGateway during concurrent verification
   let lastError: Error | null = null;
 
   for (const gateway of fallbackGateways) {
-    // Skip if this is the same as the locked gateway (we already tried it)
     const gatewayBase = gateway.replace(/\/+$/, '');
 
     try {
-      // Temporarily clear the selected gateway to allow Wayfinder to use this specific one
-      setSelectedGateway(gatewayBase);
+      // Fetch directly from this gateway (bypassing Wayfinder's routing)
+      const rawUrl = `${gatewayBase}/raw/${txId}`;
+      const response = await fetch(rawUrl);
 
-      const response = await wayfinder.request(arUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.arrayBuffer();
       const contentType = response.headers.get('content-type') || 'application/octet-stream';
 
+      // Verify hash against trusted gateways (same as fetchAndVerifyRawContent does)
+      const computedHash = await computeHash(data);
+      await verifyHashAgainstTrustedGateway(txId, computedHash, trustedGateways);
+
+      // Verification passed - cache it
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => {
         headers[key] = value;
@@ -401,14 +412,16 @@ async function verifyAndCacheResource(
  * Verify all resources in a manifest with concurrency control.
  * Returns true if manifest was empty (caller should trigger completion).
  *
- * @param primaryGateway - The primary gateway to use for all resources
+ * @param primaryGateway - The primary gateway to use for all resources (already set globally)
  * @param fallbackGateways - Backup gateways to try if primary fails for a resource
+ * @param trustedGateways - Trusted gateways for hash verification during fallback
  */
 async function verifyAllResources(
   identifier: string,
   manifest: ArweaveManifest,
   primaryGateway: string,
-  fallbackGateways: string[]
+  fallbackGateways: string[],
+  trustedGateways: string[]
 ): Promise<boolean> {
   const entries = Object.entries(manifest.paths);
 
@@ -440,11 +453,10 @@ async function verifyAllResources(
     // Handle both formats: { id: string } and raw string txId
     const txId = typeof entry === 'string' ? entry : entry.id;
 
-    const promise = (async () => {
-      // Ensure primary gateway is set before each resource verification
-      setSelectedGateway(primaryGateway);
-      await verifyAndCacheResource(identifier, txId, path, filteredFallbacks);
-    })().catch(() => { /* Errors already logged */ });
+    // Primary gateway is already set globally via setSelectedGateway before this function is called.
+    // Fallbacks use direct fetch to avoid race conditions with concurrent verification.
+    const promise = verifyAndCacheResource(identifier, txId, path, filteredFallbacks, trustedGateways)
+      .catch(() => { /* Errors already logged */ });
 
     activePromises.add(promise);
     promise.finally(() => activePromises.delete(promise));
@@ -541,7 +553,8 @@ export async function verifyIdentifier(
       identifier,
       manifest!,
       workingGateway,
-      shuffledGateways // Pass all gateways as potential fallbacks
+      shuffledGateways, // Pass all gateways as potential fallbacks
+      config.trustedGateways // Pass trusted gateways for hash verification during fallback
     );
 
     // For empty manifests, manually trigger completion since no resources will do it
