@@ -7,7 +7,7 @@
  * and more control.
  */
 
-import { createWayfinderClient, createRoutingStrategy } from '@ar.io/wayfinder-core';
+import { createWayfinderClient, createRoutingStrategy, StaticRoutingStrategy } from '@ar.io/wayfinder-core';
 import type { Wayfinder } from '@ar.io/wayfinder-core';
 import type { SwWayfinderConfig } from './types';
 import { logger } from './logger';
@@ -119,11 +119,22 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
   };
 
   // Create routing strategy
-  // Strategy type comes from config which may not match the exact enum type
-  const routingStrategy = createRoutingStrategy({
-    strategy: config.routingStrategy as 'random' | 'fastest' | 'balanced',
-    gatewaysProvider,
-  });
+  // Handle 'preferred' strategy separately using StaticRoutingStrategy
+  let routingStrategy;
+  if (config.routingStrategy === 'preferred' && config.preferredGateway) {
+    const preferredGateway = config.preferredGateway.trim() || 'https://arweave.net';
+    logger.debug(TAG, `Using preferred gateway: ${preferredGateway}`);
+    routingStrategy = new StaticRoutingStrategy({
+      gateway: preferredGateway,
+    });
+  } else {
+    // Map 'roundRobin' to 'balanced' for createRoutingStrategy
+    const strategyName = config.routingStrategy === 'roundRobin' ? 'balanced' : config.routingStrategy;
+    routingStrategy = createRoutingStrategy({
+      strategy: strategyName as 'random' | 'fastest' | 'balanced',
+      gatewaysProvider,
+    });
+  }
 
   // NOTE: We intentionally disable wayfinder-core's built-in verification.
   // Our manifest-verifier.ts handles verification using verifyHashAgainstTrustedGateway()

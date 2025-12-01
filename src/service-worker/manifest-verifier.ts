@@ -512,15 +512,39 @@ export async function verifyIdentifier(
       ? config.routingGateways
       : config.trustedGateways;
 
-    // Shuffle gateways for load distribution and to avoid always hitting the same gateway on retry
-    const shuffledGateways = [...routingGateways];
-    for (let i = shuffledGateways.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledGateways[i], shuffledGateways[j]] = [shuffledGateways[j], shuffledGateways[i]];
-    }
+    // Check if user has set a preferred gateway
+    const hasPreferredGateway = config.routingStrategy === 'preferred' && config.preferredGateway;
 
-    // Step 1: Find a responsive gateway (lightweight HEAD request)
-    const workingGateway = await selectWorkingGateway(txId, shuffledGateways);
+    let workingGateway: string;
+    let fallbackGateways: string[];
+
+    if (hasPreferredGateway) {
+      // Use the preferred gateway directly (don't shuffle or select)
+      const preferredGateway = config.preferredGateway!.trim().replace(/\/+$/, '');
+      logger.debug(TAG, `Using preferred gateway: ${preferredGateway}`);
+
+      // Still need to verify the preferred gateway is responsive
+      try {
+        workingGateway = await selectWorkingGateway(txId, [preferredGateway]);
+      } catch {
+        // Preferred gateway is not responsive, inform user
+        throw new Error(`Preferred gateway ${preferredGateway} is not responding. Try a different gateway.`);
+      }
+
+      // Fallback gateways are the routing pool (in case individual resources fail)
+      fallbackGateways = routingGateways.filter(g => g.replace(/\/+$/, '') !== preferredGateway);
+    } else {
+      // Shuffle gateways for load distribution and to avoid always hitting the same gateway on retry
+      const shuffledGateways = [...routingGateways];
+      for (let i = shuffledGateways.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledGateways[i], shuffledGateways[j]] = [shuffledGateways[j], shuffledGateways[i]];
+      }
+
+      // Step 1: Find a responsive gateway (lightweight HEAD request)
+      workingGateway = await selectWorkingGateway(txId, shuffledGateways);
+      fallbackGateways = shuffledGateways;
+    }
 
     // Step 2: Lock in this gateway for all subsequent requests
     setSelectedGateway(workingGateway);
@@ -572,7 +596,7 @@ export async function verifyIdentifier(
       identifier,
       manifest!,
       workingGateway,
-      shuffledGateways, // Pass all gateways as potential fallbacks
+      fallbackGateways, // Pass all gateways as potential fallbacks
       config.trustedGateways // Pass trusted gateways for hash verification during fallback
     );
 
