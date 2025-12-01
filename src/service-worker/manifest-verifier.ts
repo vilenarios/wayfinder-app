@@ -354,8 +354,9 @@ async function verifyAndCacheResource(
     recordResourceVerified(identifier, txId, path);
     return;
 
-  } catch {
-    logger.debug(TAG, `Primary gateway failed for ${path}, trying fallbacks...`);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.warn(TAG, `Primary gateway failed for ${path}: ${errMsg}, trying fallbacks...`);
     // Continue to fallback attempts
   }
 
@@ -391,12 +392,12 @@ async function verifyAndCacheResource(
       verifiedCache.set(txId, { contentType, data, headers });
       recordResourceVerified(identifier, txId, path);
 
-      logger.debug(TAG, `Fallback succeeded: ${path} from ${new URL(gatewayBase).hostname}`);
+      logger.info(TAG, `Fallback succeeded: ${path} via ${new URL(gatewayBase).hostname}`);
       return;
 
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      logger.debug(TAG, `Fallback ${new URL(gatewayBase).hostname} failed for ${path}`);
+      logger.warn(TAG, `Fallback ${new URL(gatewayBase).hostname} failed for ${path}: ${lastError.message}`);
       // Continue to next fallback
     }
   }
@@ -435,7 +436,7 @@ async function verifyAllResources(
     return true;
   }
 
-  logger.info(TAG, `Verifying ${entries.length} resources (${fallbackGateways.length} fallback gateways available)`);
+  logger.debug(TAG, `Verifying ${entries.length} resources (${fallbackGateways.length} fallback gateways)`);
 
   // Filter out the primary gateway from fallbacks to avoid duplicate attempts
   const filteredFallbacks = fallbackGateways.filter(g =>

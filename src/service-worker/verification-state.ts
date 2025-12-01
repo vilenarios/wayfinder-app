@@ -78,7 +78,7 @@ export function startManifestVerification(identifier: string): ManifestVerificat
     identifier,
   });
 
-  logger.info(TAG, `Started: ${identifier}`);
+  logger.debug(TAG, `Started: ${identifier}`);
   return state;
 }
 
@@ -131,7 +131,7 @@ export function setManifestLoaded(
 
   state.totalResources = state.pathToTxId.size;
 
-  logger.info(TAG, `Manifest: ${state.totalResources} resources`);
+  logger.debug(TAG, `Manifest: ${state.totalResources} resources`);
   logger.debug(TAG, `Paths:`, Array.from(state.pathToTxId.keys()));
 
   broadcastEvent({

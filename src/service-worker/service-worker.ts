@@ -75,7 +75,7 @@ self.addEventListener('message', (event) => {
 
   if (event.data.type === 'CLEAR_CACHE') {
     verifiedCache.clear();
-    logger.info(TAG, 'Cache cleared');
+    logger.debug(TAG, 'Cache cleared');
     event.ports[0]?.postMessage({ type: 'CACHE_CLEARED' });
   }
 
@@ -95,7 +95,7 @@ self.addEventListener('message', (event) => {
       if (getActiveIdentifier() === identifier) {
         setActiveIdentifier(null);
       }
-      logger.info(TAG, `Cleared verification for: ${identifier}`);
+      logger.debug(TAG, `Cleared verification for: ${identifier}`);
     }
     event.ports[0]?.postMessage({ type: 'VERIFICATION_CLEARED' });
   }
@@ -157,7 +157,7 @@ async function handleArweaveProxy(request: Request): Promise<Response> {
   // Wait for Wayfinder to be initialized (handles race condition at startup)
   // The app sends INIT_WAYFINDER after registration, so we wait for that
   if (!isWayfinderReady()) {
-    logger.info(TAG, 'Waiting for Wayfinder initialization...');
+    logger.debug(TAG, 'Waiting for Wayfinder initialization...');
     const initialized = await waitForInitialization(10000); // Wait up to 10 seconds
 
     if (!initialized) {
@@ -168,7 +168,7 @@ async function handleArweaveProxy(request: Request): Promise<Response> {
         identifier
       );
     }
-    logger.info(TAG, 'Wayfinder initialization complete, proceeding with request');
+    logger.debug(TAG, 'Wayfinder initialization complete');
   }
 
   const config = getConfig();
@@ -200,7 +200,7 @@ async function handleArweaveProxy(request: Request): Promise<Response> {
     }
 
     // Start new verification
-    logger.info(TAG, `Starting verification: ${identifier}`);
+    logger.debug(TAG, `Starting verification: ${identifier}`);
     await startVerification(identifier, config);
     // Set as active so we can intercept absolute path requests from this app
     setActiveIdentifier(identifier);

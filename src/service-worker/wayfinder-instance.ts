@@ -198,7 +198,17 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     }
   }
 
+  // Create a quiet logger for Wayfinder core that only shows warnings/errors
+  // This reduces noise from per-request/per-hash debug logs
+  const quietLogger = {
+    debug: () => {}, // Suppress debug logs
+    info: () => {},  // Suppress info logs
+    warn: console.warn,
+    error: console.error,
+  };
+
   wayfinderInstance = createWayfinderClient({
+    logger: quietLogger,
     routingSettings: {
       strategy: routingStrategy,
     },
