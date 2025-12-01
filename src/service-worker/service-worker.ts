@@ -19,7 +19,7 @@ import './process-polyfill';
 import './buffer-polyfill';
 import './fetch-polyfill';
 
-import { initializeWayfinder, isWayfinderReady, getConfig } from './wayfinder-instance';
+import { initializeWayfinder, isWayfinderReady, getConfig, waitForInitialization } from './wayfinder-instance';
 import { verifyIdentifier, getVerifiedContent, setVerificationConcurrency } from './manifest-verifier';
 import {
   getManifestState,
@@ -154,15 +154,30 @@ async function handleArweaveProxy(request: Request): Promise<Response> {
     return new Response('Missing identifier in path', { status: 400 });
   }
 
-  // Check if Wayfinder is ready
+  // Wait for Wayfinder to be initialized (handles race condition at startup)
+  // The app sends INIT_WAYFINDER after registration, so we wait for that
   if (!isWayfinderReady()) {
-    logger.warn(TAG, 'Wayfinder not initialized');
-    return new Response('Verification service not ready. Please reload.', { status: 503 });
+    logger.info(TAG, 'Waiting for Wayfinder initialization...');
+    const initialized = await waitForInitialization(10000); // Wait up to 10 seconds
+
+    if (!initialized) {
+      logger.warn(TAG, 'Wayfinder initialization timeout');
+      return createErrorResponse(
+        'Verification Not Ready',
+        'The verification service is still initializing. Please reload the page or try again.',
+        identifier
+      );
+    }
+    logger.info(TAG, 'Wayfinder initialization complete, proceeding with request');
   }
 
   const config = getConfig();
   if (!config) {
-    return new Response('Configuration not available', { status: 503 });
+    return createErrorResponse(
+      'Configuration Error',
+      'Verification configuration not available. Please reload the page.',
+      identifier
+    );
   }
 
   try {

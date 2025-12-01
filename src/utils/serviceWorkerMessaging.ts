@@ -1,56 +1,135 @@
 export interface ServiceWorkerMessage {
   type: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export class ServiceWorkerMessenger {
-  private listeners = new Map<string, Set<(data: any) => void>>();
+  private listeners = new Map<string, Set<(data: ServiceWorkerMessage) => void>>();
+  private messageListenerAttached = false;
+  private registrationPromise: Promise<void> | null = null;
 
   /**
-   * Initialize and register service worker
+   * Proactively register service worker at app startup.
+   * This ensures the SW is installed and controlling the page before verification is enabled.
+   * Safe to call multiple times - will reuse existing registration.
+   *
    * @param scriptURL - URL to the service worker script
    * @param options - Registration options (e.g., { type: 'module' } for ES module service workers)
    */
-  async register(scriptURL: string, options?: RegistrationOptions): Promise<void> {
-    if ('serviceWorker' in navigator) {
-      try {
-        await navigator.serviceWorker.register(scriptURL, options);
+  async registerProactive(scriptURL: string, options?: RegistrationOptions): Promise<void> {
+    // Reuse existing registration if in progress
+    if (this.registrationPromise) {
+      return this.registrationPromise;
+    }
 
-        // Set up message listener
+    this.registrationPromise = this.doRegister(scriptURL, options);
+    return this.registrationPromise;
+  }
+
+  private async doRegister(scriptURL: string, options?: RegistrationOptions): Promise<void> {
+    if (!('serviceWorker' in navigator)) {
+      console.warn('[SW] Service workers not supported');
+      return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.register(scriptURL, options);
+      console.log('[SW] Registered:', registration.scope);
+
+      // Set up message listener (only once)
+      if (!this.messageListenerAttached) {
         navigator.serviceWorker.addEventListener('message', (event) => {
           this.handleMessage(event.data);
         });
+        this.messageListenerAttached = true;
+      }
 
-        // Wait for service worker to be ready
-        await navigator.serviceWorker.ready;
+      // Wait for service worker to be ready
+      await navigator.serviceWorker.ready;
 
-        // Wait for controller to be available (service worker needs to control the page)
-        if (!navigator.serviceWorker.controller) {
-          await new Promise<void>((resolve) => {
-            navigator.serviceWorker.addEventListener('controllerchange', () => {
-              resolve();
-            }, { once: true });
+      // Wait for controller with robust retry
+      await this.waitForController();
 
-            // Also timeout after 2 seconds if no control
-            setTimeout(() => {
-              resolve();
-            }, 2000);
-          });
+    } catch (error) {
+      console.error('[SW] Registration failed:', error);
+      this.registrationPromise = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Wait for the service worker to become the controller.
+   * Uses exponential backoff with a maximum wait time.
+   */
+  private async waitForController(maxWaitMs = 5000): Promise<boolean> {
+    if (navigator.serviceWorker.controller) {
+      return true;
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let resolved = false;
+
+      // Listen for controller change
+      const onControllerChange = () => {
+        if (!resolved) {
+          resolved = true;
+          console.log('[SW] Controller acquired');
+          resolve(true);
+        }
+      };
+
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: true });
+
+      // Also poll with exponential backoff as a fallback
+      const startTime = Date.now();
+      const poll = async () => {
+        if (resolved) return;
+
+        if (navigator.serviceWorker.controller) {
+          resolved = true;
+          console.log('[SW] Controller acquired (poll)');
+          resolve(true);
+          return;
         }
 
-      } catch (error) {
-        console.error('[SW] Registration failed:', error);
-        throw error;
-      }
-    } else {
-      throw new Error('Service workers not supported');
-    }
+        if (Date.now() - startTime >= maxWaitMs) {
+          resolved = true;
+          console.warn('[SW] Controller not acquired within timeout - will be ready on next page load');
+          resolve(false);
+          return;
+        }
+
+        // Exponential backoff: 50, 100, 200, 400, 800...
+        const elapsed = Date.now() - startTime;
+        const delay = Math.min(50 * Math.pow(2, Math.floor(elapsed / 500)), 800);
+        setTimeout(poll, delay);
+      };
+
+      poll();
+    });
+  }
+
+  /**
+   * Check if service worker is controlling the page.
+   */
+  isControlling(): boolean {
+    return 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+  }
+
+  /**
+   * Initialize and register service worker (legacy method for compatibility)
+   * @param scriptURL - URL to the service worker script
+   * @param options - Registration options (e.g., { type: 'module' } for ES module service workers)
+   * @deprecated Use registerProactive() instead
+   */
+  async register(scriptURL: string, options?: RegistrationOptions): Promise<void> {
+    return this.registerProactive(scriptURL, options);
   }
 
   /**
    * Send message to service worker
    */
-  async send(message: ServiceWorkerMessage): Promise<any> {
+  async send(message: ServiceWorkerMessage): Promise<ServiceWorkerMessage> {
     const controller = navigator.serviceWorker.controller;
     if (!controller) {
       throw new Error('No service worker controller');
@@ -74,7 +153,7 @@ export class ServiceWorkerMessenger {
   /**
    * Listen for specific message types
    */
-  on(type: string, callback: (data: any) => void): () => void {
+  on(type: string, callback: (data: ServiceWorkerMessage) => void): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
     }

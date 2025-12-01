@@ -25,6 +25,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
   // Fetch verification gateways when settings panel opens and verification is enabled
   useEffect(() => {
     if (isOpen && (config.verificationEnabled || localConfig.verificationEnabled)) {
+      /* eslint-disable react-hooks/set-state-in-effect */
       setLoadingGateways(true);
       getTrustedGateways()
         .then(gateways => {
@@ -37,6 +38,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
         .finally(() => {
           setLoadingGateways(false);
         });
+      /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [isOpen, config.verificationEnabled, localConfig.verificationEnabled]);
 
@@ -47,20 +49,13 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
       preferredGateway: localConfig.preferredGateway?.trim(),
     };
 
-    // Check if verification was just enabled (was off, now on)
-    const verificationJustEnabled = !config.verificationEnabled && configToSave.verificationEnabled;
-
     updateConfig(configToSave);
     onClose();
 
-    // Auto-reload when verification is enabled to activate the service worker
-    // Service workers need a page reload to take control
-    if (verificationJustEnabled) {
-      // Small delay to ensure config is saved to localStorage
-      setTimeout(() => {
-        window.location.reload();
-      }, 100);
-    }
+    // Note: No reload needed when enabling verification.
+    // The service worker is registered proactively at app startup (main.tsx),
+    // so it's already controlling the page. The SW will wait for initialization
+    // via request queuing if needed.
   };
 
   const handleCancel = () => {

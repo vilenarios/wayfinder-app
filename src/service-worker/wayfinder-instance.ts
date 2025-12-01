@@ -21,6 +21,43 @@ let currentConfig: SwWayfinderConfig | null = null;
 // When set, all resource fetches use this gateway instead of random selection
 let selectedGateway: URL | null = null;
 
+// Promise that resolves when Wayfinder is initialized
+// Used by fetch handler to wait for initialization instead of returning 503
+let initializationResolve: (() => void) | null = null;
+let initializationPromise: Promise<void> | null = null;
+
+/**
+ * Wait for Wayfinder to be initialized.
+ * Returns immediately if already initialized, otherwise waits up to maxWaitMs.
+ *
+ * @param maxWaitMs Maximum time to wait in milliseconds (default 10 seconds)
+ * @returns true if initialized, false if timed out
+ */
+export async function waitForInitialization(maxWaitMs = 10000): Promise<boolean> {
+  // Already initialized
+  if (wayfinderInstance !== null) {
+    return true;
+  }
+
+  // Create the promise if it doesn't exist
+  if (!initializationPromise) {
+    initializationPromise = new Promise<void>((resolve) => {
+      initializationResolve = resolve;
+    });
+  }
+
+  // Race between initialization and timeout
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    setTimeout(() => resolve(false), maxWaitMs);
+  });
+
+  const initPromise = initializationPromise.then(() => true);
+
+  const result = await Promise.race([initPromise, timeoutPromise]);
+
+  return result;
+}
+
 /**
  * Set a specific gateway for all subsequent resource fetches.
  * Used to ensure all resources in a manifest come from the same gateway.
@@ -126,8 +163,9 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
   };
 
   // Create routing strategy
+  // Strategy type comes from config which may not match the exact enum type
   const routingStrategy = createRoutingStrategy({
-    strategy: config.routingStrategy as any,
+    strategy: config.routingStrategy as 'random' | 'fastest' | 'balanced',
     gatewaysProvider,
   });
 
@@ -169,6 +207,13 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
       enabled: false,
     },
   });
+
+  // Resolve any pending initialization waiters
+  if (initializationResolve) {
+    initializationResolve();
+    initializationResolve = null;
+    initializationPromise = null;
+  }
 
   logger.info(TAG, `Ready: verification=${verificationSettings.enabled ? verificationMethod : 'disabled'}, strict=${config.strict}`);
 }

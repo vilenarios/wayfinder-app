@@ -112,14 +112,12 @@ export function VerificationLoadingScreen({
             detail={manifestTxId ? formatTxId(manifestTxId) : undefined}
           />
 
-          {/* Phase 2: Fetching Manifest */}
-          {!isSingleFile && (
-            <PhaseRow
-              status={getPhaseStatus('fetching-manifest')}
-              label="Fetch manifest"
-              detail={progress.total > 0 ? `${progress.total} resource${progress.total !== 1 ? 's' : ''}` : undefined}
-            />
-          )}
+          {/* Phase 2: Fetching Content */}
+          <PhaseRow
+            status={getPhaseStatus('fetching-manifest')}
+            label="Fetch content"
+            detail={progress.total > 1 ? `${progress.total} resources` : undefined}
+          />
 
           {/* Phase 3: Verifying */}
           <PhaseRow

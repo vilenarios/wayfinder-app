@@ -437,6 +437,12 @@ export async function verifyIdentifier(
     // Step 2: Lock in this gateway for all subsequent requests
     setSelectedGateway(workingGateway);
 
+    // Store the working gateway in state for later use (e.g., location patching)
+    const state = getManifestState(identifier);
+    if (state) {
+      state.routingGateway = workingGateway;
+    }
+
     broadcastEvent({
       type: 'routing-gateway',
       identifier,
@@ -536,10 +542,13 @@ export function getVerifiedContent(
   }
 
   // If this is HTML and we have a location patcher, inject the patch
+  const contentType = resource.contentType.toLowerCase();
+  logger.debug(TAG, `Serving ${identifier}/${normalizedPath}: contentType=${contentType}, routingGateway=${state.routingGateway || 'none'}`);
+
   if (injectLocationPatch && state.routingGateway) {
-    const contentType = resource.contentType.toLowerCase();
     if (contentType.includes('text/html')) {
       try {
+        logger.debug(TAG, `Injecting location patch for ${identifier}`);
         const html = new TextDecoder().decode(resource.data);
         const patchedHtml = injectLocationPatch(html, identifier, state.routingGateway);
         const patchedData = new TextEncoder().encode(patchedHtml);

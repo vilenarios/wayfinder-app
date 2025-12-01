@@ -66,7 +66,7 @@ The app uses React Context for configuration management with localStorage persis
 
 2. **WayfinderProvider** from @ar.io/wayfinder-react: Manages gateway routing and URL resolution
    - Receives configuration from WayfinderConfigContext
-   - Re-initializes when config changes (via key prop in App.tsx:164)
+   - Re-initializes when config changes (via key prop in App.tsx:165-168)
    - Provides `useWayfinderUrl` hook for resolving ar:// URLs to gateway URLs
    - **Critical**: Must be configured with `routingSettings.strategy` or it will have no gateways available
    - Uses `TrustedPeersGatewaysProvider` to fetch gateway list from arweave.net
@@ -104,7 +104,7 @@ The app automatically detects input type using `detectInputType()` (src/utils/de
 - **Transaction ID**: Exactly 43 characters matching `/^[A-Za-z0-9_-]{43}$/`
 - **ArNS Name**: Everything else (1-51 chars, case-insensitive alphanumeric with dashes/underscores)
 
-ContentViewer.tsx:15,19-22 uses this to pass the correct params to `useWayfinderUrl`:
+ContentViewer.tsx:14-22 uses this to pass the correct params to `useWayfinderUrl`:
 ```typescript
 const inputType = detectInputType(input);
 const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
@@ -118,13 +118,13 @@ const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
 4. `useWayfinderUrl()` hook resolves ar:// URL to gateway URL based on routing strategy
 5. Iframe loads the resolved URL (or new tab if CMD/CTRL+Enter was used)
 
-**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:183-191) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:193-208).
+**URL Query Parameter Support**: The app reads the `?q=` parameter on mount (App.tsx:207-215) to auto-execute searches. When users search, the URL updates with the query parameter to support browser back/forward navigation and direct links. Browser back/forward buttons are handled via the `popstate` event listener (App.tsx:217-231).
 
-**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:344-351) to open the tab once the URL resolves.
+**Open in New Tab**: Users can press CMD/CTRL+Enter in the search bar to resolve the URL and immediately open it in a new tab instead of loading it in the iframe. The app sets `shouldAutoOpenInNewTab` flag and uses a useEffect (App.tsx:547-554) to open the tab once the URL resolves.
 
 ### Gateway Configuration
 
-The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:19-168):
+The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:26-172):
 
 1. **Resilient Gateway Fetching**: Multi-layer fallback system with minimal hardcoding
    - **Primary**: Tries arweave.net/ar-io/peers (only hardcoded gateway)
@@ -157,7 +157,7 @@ The routing strategy configuration is recreated whenever the user changes their 
 
 ### Gateway Retry Mechanism
 
-When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:383) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
+When content fails to load, users can click "Retry with different gateway" which increments a `searchCounter` state. The ContentViewer component is keyed by `${searchInput}-${searchCounter}` (App.tsx:653) which forces React to unmount and remount the component with a fresh gateway selection from the routing strategy.
 
 ### Settings Persistence
 
@@ -394,7 +394,7 @@ This two-layer approach ensures compatibility while optimizing development perfo
 
 ## iframe Security Configuration
 
-The ContentViewer iframe (src/components/ContentViewer.tsx:101) and verification-mode iframe (App.tsx:377) use these sandbox attributes:
+The ContentViewer iframe (src/components/ContentViewer.tsx:101) and verification-mode iframe (App.tsx:621-631) use these sandbox attributes:
 - `allow-scripts` - Required for interactive content
 - `allow-same-origin` - Required for certain content types
 - `allow-forms` - Allows form submissions
@@ -408,15 +408,15 @@ These settings balance functionality with security for displaying arbitrary Arwe
 ### Adding a New Routing Strategy
 
 1. Add type to `RoutingStrategy` union in src/types/index.ts:1
-2. Add option to `ROUTING_STRATEGY_OPTIONS` in src/utils/constants.ts:10
+2. Add option to `ROUTING_STRATEGY_OPTIONS` in src/utils/constants.ts:14
 3. Update SettingsFlyout.tsx to handle new strategy UI if needed
 4. Wayfinder library handles the actual routing logic
 
 ### Modifying Configuration Schema
 
-1. Update `WayfinderConfig` interface in src/types/index.ts:3
+1. Update `WayfinderConfig` interface in src/types/index.ts:5
 2. Update `DEFAULT_CONFIG` in src/utils/constants.ts:5
-3. Update `wayfinderConfig` construction in App.tsx:24
+3. Update `wayfinderConfig` construction in App.tsx:30
 4. Update SettingsFlyout.tsx UI to expose new setting
 
 ### Adding Service Worker Message Types
@@ -434,7 +434,7 @@ All components using Wayfinder hooks (like ContentViewer) receive `{ resolvedUrl
 
 ## Troubleshooting
 
-**"No gateways available" error**: The WayfinderProvider requires `routingSettings.strategy` to be configured. Check App.tsx:20-72 to ensure:
+**"No gateways available" error**: The WayfinderProvider requires `routingSettings.strategy` to be configured. Check App.tsx:26-161 to ensure:
 - `TrustedPeersGatewaysProvider` is initialized with a valid trusted gateway URL
 - `createRoutingStrategy` is called with the gatewaysProvider
 - `routingSettings.strategy` is passed to WayfinderProvider

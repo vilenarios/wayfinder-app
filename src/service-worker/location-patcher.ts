@@ -14,118 +14,66 @@ const TAG = 'LocationPatcher';
 
 /**
  * Create the location patching script.
- * This script overrides window.location properties to simulate
- * the app running at the gateway subdomain.
+ *
+ * Uses history.replaceState() to actually change location.pathname from
+ * /ar-proxy/{identifier}/ to /. This works because:
+ * 1. replaceState can change the URL to any same-origin path
+ * 2. The service worker's absolute path interception still serves resources
+ *    from the active identifier's verified cache
+ * 3. The app sees location.pathname === '/' and routes correctly
  */
 function createLocationPatchScript(identifier: string, gatewayUrl: string): string {
-  // Parse the gateway URL to get the host
+  // Parse the gateway URL to get the host (for debugging/future use)
   let gatewayHost: string;
   try {
     gatewayHost = new URL(gatewayUrl).host;
   } catch {
-    // Fallback if URL parsing fails
     gatewayHost = 'arweave.net';
   }
 
-  // Build the simulated origin
   const simulatedHost = `${identifier}.${gatewayHost}`;
-  const simulatedOrigin = `https://${simulatedHost}`;
 
   // The script to inject - runs before any app code
   return `<script data-wayfinder-location-patch>
 (function() {
-  // Simulated location values
-  const SIM_HOST = '${simulatedHost}';
-  const SIM_HOSTNAME = SIM_HOST.split(':')[0];
-  const SIM_ORIGIN = '${simulatedOrigin}';
   const PROXY_PREFIX = '/ar-proxy/${identifier}';
+  const originalPathname = window.location.pathname;
+  const originalHref = window.location.href;
 
-  // Store original location descriptor
-  const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
-  const originalLocation = window.location;
+  // Calculate what the pathname should be without the proxy prefix
+  let newPathname = '/';
+  if (originalPathname.startsWith(PROXY_PREFIX)) {
+    newPathname = originalPathname.slice(PROXY_PREFIX.length) || '/';
+  }
 
-  // Helper to strip proxy prefix from pathname
-  function getSimulatedPathname() {
-    const path = originalLocation.pathname;
-    if (path.startsWith(PROXY_PREFIX)) {
-      const stripped = path.slice(PROXY_PREFIX.length);
-      return stripped || '/';
+  // Use history.replaceState to actually change the URL
+  // This makes location.pathname return the correct value
+  if (originalPathname !== newPathname) {
+    try {
+      const newUrl = newPathname + window.location.search + window.location.hash;
+      history.replaceState(history.state, '', newUrl);
+      console.log('[Wayfinder] URL rewritten:', originalPathname, '->', newPathname);
+    } catch (e) {
+      console.warn('[Wayfinder] Could not rewrite URL:', e);
     }
-    return path;
   }
 
-  // Helper to build simulated href
-  function getSimulatedHref() {
-    const pathname = getSimulatedPathname();
-    const search = originalLocation.search;
-    const hash = originalLocation.hash;
-    return SIM_ORIGIN + pathname + search + hash;
-  }
+  // Store debug info
+  window.__wayfinderDebug = {
+    originalPathname: originalPathname,
+    originalHref: originalHref,
+    rewrittenPathname: window.location.pathname,
+    identifier: '${identifier}',
+    gateway: '${gatewayHost}',
+    simulatedHost: '${simulatedHost}'
+  };
 
-  // Create a proxy that intercepts location property access
-  const locationProxy = new Proxy(originalLocation, {
-    get(target, prop, receiver) {
-      switch (prop) {
-        case 'host':
-          return SIM_HOST;
-        case 'hostname':
-          return SIM_HOSTNAME;
-        case 'origin':
-          return SIM_ORIGIN;
-        case 'pathname':
-          return getSimulatedPathname();
-        case 'href':
-          return getSimulatedHref();
-        case 'protocol':
-          return 'https:';
-        case 'port':
-          return '';
-        case 'toString':
-          return function() { return getSimulatedHref(); };
-        case 'valueOf':
-          return function() { return getSimulatedHref(); };
-        default:
-          // For methods like assign, replace, reload - use original
-          const value = Reflect.get(target, prop, receiver);
-          if (typeof value === 'function') {
-            return value.bind(target);
-          }
-          return value;
-      }
-    },
-    set(target, prop, value) {
-      // Allow setting properties like href (for navigation)
-      return Reflect.set(target, prop, value);
-    }
-  });
-
-  // Override window.location
-  try {
-    Object.defineProperty(window, 'location', {
-      get() { return locationProxy; },
-      set(value) {
-        // Handle location = 'url' (navigation)
-        originalLocation.href = value;
-      },
-      configurable: true
-    });
-  } catch (e) {
-    // Some browsers may not allow this
-    console.warn('[Wayfinder] Could not patch window.location:', e);
-  }
-
-  // Also patch document.location (it's the same as window.location)
-  try {
-    Object.defineProperty(document, 'location', {
-      get() { return locationProxy; },
-      set(value) {
-        originalLocation.href = value;
-      },
-      configurable: true
-    });
-  } catch (e) {
-    // Ignore if we can't patch document.location
-  }
+  // Also expose a helper for apps that want gateway info
+  window.__wayfinderContext = {
+    identifier: '${identifier}',
+    gateway: '${gatewayHost}',
+    simulatedOrigin: 'https://${simulatedHost}'
+  };
 })();
 </script>`;
 }

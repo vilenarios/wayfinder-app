@@ -16,7 +16,10 @@ const processShim = {
 };
 
 // Install on globalThis so it's available everywhere
+// Requires 'any' casts for adding non-standard properties
+/* eslint-disable @typescript-eslint/no-explicit-any */
 (globalThis as any).process = processShim;
 (self as any).process = processShim;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 export {};

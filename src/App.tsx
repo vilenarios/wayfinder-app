@@ -231,7 +231,8 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Register and initialize service worker for verification
+  // Initialize service worker for verification
+  // Note: SW is registered proactively in main.tsx at app startup
   useEffect(() => {
     async function initServiceWorker() {
       if (!config.verificationEnabled) {
@@ -240,21 +241,17 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
       }
 
       try {
-        // Register service worker
-        // Dev: vite-plugin-pwa serves at /dev-sw.js?dev-sw as ES module
-        // Prod: vite-plugin-pwa outputs to /service-worker.js as IIFE (no module type needed)
-        await swMessenger.register(
-          import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/service-worker.js',
-          import.meta.env.DEV ? { type: 'module' } : undefined
-        );
+        // Wait for SW to be controlling (should already be from proactive registration)
+        // This handles edge cases where the effect runs before registration completes
+        if (!swMessenger.isControlling()) {
+          // Give SW a moment to take control (proactive registration is in progress)
+          await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Check if we have a controller
-        // On first registration, the SW won't control the page until reload
-        // The SettingsFlyout auto-reloads when verification is first enabled
-        // For edge cases (e.g., cleared SW), it will work on next reload
-        if (!navigator.serviceWorker.controller) {
-          setSwReady(false);
-          return;
+          if (!swMessenger.isControlling()) {
+            console.warn('[SW] Controller not ready yet - will retry on next render');
+            setSwReady(false);
+            return;
+          }
         }
 
         // Get trusted gateways (top-staked, for hash verification)
