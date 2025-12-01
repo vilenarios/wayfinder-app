@@ -126,6 +126,7 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     logger.debug(TAG, `Using preferred gateway: ${preferredGateway}`);
     routingStrategy = new StaticRoutingStrategy({
       gateway: preferredGateway,
+      logger: quietWayfinderLogger,
     });
   } else {
     // Map 'roundRobin' to 'balanced' for createRoutingStrategy
@@ -133,6 +134,7 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     routingStrategy = createRoutingStrategy({
       strategy: strategyName as 'random' | 'fastest' | 'balanced',
       gatewaysProvider,
+      logger: quietWayfinderLogger,
     });
   }
 
