@@ -361,7 +361,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
         // Handle verification-complete
         // Note: This event fires even when some resources failed
-        // Only set to 'verified' if there was no error
         if (vEvent.type === 'verification-complete') {
           if (vEvent.progress) {
             setVerificationStats(prev => ({
@@ -370,9 +369,19 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
               verified: vEvent.progress!.current,
             }));
           }
-          // Only set 'verified' state if no error was reported
-          // If there were failures, keep the current state (failed/partial)
-          if (!vEvent.error) {
+
+          // Determine final state based on whether there were failures
+          if (vEvent.error) {
+            // Some resources failed - check if any succeeded
+            const verifiedCount = vEvent.progress?.current ?? 0;
+            setVerificationState(verifiedCount > 0 ? 'partial' : 'failed');
+            setVerificationError(vEvent.error);
+
+            // Show blocked modal if strict mode is enabled and user hasn't bypassed
+            if (config.strictVerification && !userBypassedVerification) {
+              setShowBlockedModal(true);
+            }
+          } else {
             setVerificationState('verified');
           }
           setVerificationPhase('complete');
@@ -380,9 +389,11 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
         // Handle verification-failed
         if (vEvent.type === 'verification-failed') {
-          // Only increment failed count for resource-level failures (has resourcePath)
-          // Top-level failures (ArNS resolution, manifest fetch) don't have resourcePath
+          // Resource-level failure (has resourcePath) - just one resource failed
+          // Top-level failure (no resourcePath) - entire verification failed
           if (vEvent.resourcePath) {
+            // Individual resource failure - update stats but don't change phase
+            // Verification is still in progress, more resources may be processing
             setVerificationStats(prev => ({
               ...prev,
               failed: prev.failed + 1,
@@ -394,18 +405,18 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
               newList.push({ path: vEvent.resourcePath!, status: 'failed' });
               return newList.slice(-8);
             });
-          }
-          setVerificationError(vEvent.error);
+            // Don't set error or change state - wait for verification-complete
+          } else {
+            // Top-level failure (ArNS resolution, manifest fetch, etc.)
+            // This means verification cannot proceed at all
+            setVerificationError(vEvent.error);
+            setVerificationState('failed');
+            setVerificationPhase('complete');
 
-          // Determine if this is a total failure or partial
-          // Use the progress from the event, not stale closure state
-          const verifiedCount = vEvent.progress?.current ?? 0;
-          setVerificationState(verifiedCount > 0 ? 'partial' : 'failed');
-          setVerificationPhase('complete');
-
-          // Show blocked modal if strict mode is enabled and user hasn't bypassed
-          if (config.strictVerification && !userBypassedVerification) {
-            setShowBlockedModal(true);
+            // Show blocked modal if strict mode is enabled and user hasn't bypassed
+            if (config.strictVerification && !userBypassedVerification) {
+              setShowBlockedModal(true);
+            }
           }
         }
       }
