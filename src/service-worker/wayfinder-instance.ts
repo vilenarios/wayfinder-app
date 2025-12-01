@@ -74,6 +74,14 @@ export function getSelectedGateway(): string | null {
   return selectedGateway?.toString() || null;
 }
 
+// Quiet logger for Wayfinder core - suppresses debug/info logs to reduce noise
+const quietWayfinderLogger = {
+  debug: () => {}, // Suppress debug logs
+  info: () => {},  // Suppress info logs
+  warn: console.warn,
+  error: console.error,
+};
+
 /**
  * Create a verification strategy based on the specified method.
  * - 'hash': Fast SHA-256 hash comparison (default)
@@ -86,11 +94,11 @@ function createVerificationStrategyFromMethod(
   switch (method) {
     case 'signature':
       logger.debug(TAG, 'Using SignatureVerificationStrategy');
-      return new SignatureVerificationStrategy({ trustedGateways });
+      return new SignatureVerificationStrategy({ trustedGateways, logger: quietWayfinderLogger });
     case 'hash':
     default:
       logger.debug(TAG, 'Using HashVerificationStrategy');
-      return new HashVerificationStrategy({ trustedGateways });
+      return new HashVerificationStrategy({ trustedGateways, logger: quietWayfinderLogger });
   }
 }
 
@@ -198,17 +206,8 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     }
   }
 
-  // Create a quiet logger for Wayfinder core that only shows warnings/errors
-  // This reduces noise from per-request/per-hash debug logs
-  const quietLogger = {
-    debug: () => {}, // Suppress debug logs
-    info: () => {},  // Suppress info logs
-    warn: console.warn,
-    error: console.error,
-  };
-
   wayfinderInstance = createWayfinderClient({
-    logger: quietLogger,
+    logger: quietWayfinderLogger,
     routingSettings: {
       strategy: routingStrategy,
     },
