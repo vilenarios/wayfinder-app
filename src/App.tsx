@@ -189,6 +189,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     total: 0,
     verified: 0,
     failed: 0,
+    failedResources: [],
   });
   const [verificationError, setVerificationError] = useState<string | undefined>();
   const [showBlockedModal, setShowBlockedModal] = useState(false);
@@ -385,6 +386,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
             setVerificationStats(prev => ({
               ...prev,
               failed: prev.failed + 1,
+              failedResources: [...(prev.failedResources || []), vEvent.resourcePath!],
             }));
             // Add failed resource to recent list
             setRecentVerifiedResources(prev => {
@@ -423,7 +425,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
     // Reset verification state for new search
     setVerificationState('idle');
-    setVerificationStats({ total: 0, verified: 0, failed: 0 });
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
     setVerificationError(undefined);
     setShowBlockedModal(false);
     setUserBypassedVerification(false);
@@ -458,7 +460,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
 
     // Reset verification state for retry
     setVerificationState('idle');
-    setVerificationStats({ total: 0, verified: 0, failed: 0 });
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
     setVerificationError(undefined);
     setShowBlockedModal(false);
     setUserBypassedVerification(false);
@@ -525,7 +527,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setIsSearched(false);
     setShowBlockedModal(false);
     setVerificationState('idle');
-    setVerificationStats({ total: 0, verified: 0, failed: 0 });
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
     setVerificationError(undefined);
     setUserBypassedVerification(false);
 

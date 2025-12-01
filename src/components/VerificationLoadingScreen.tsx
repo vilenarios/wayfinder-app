@@ -137,7 +137,7 @@ export function VerificationLoadingScreen({
         {/* Resource Log (only for manifests with multiple resources) */}
         {!isSingleFile && recentResources.length > 0 && (
           <div className="bg-container-L2 rounded-lg p-4 mb-4 border border-stroke-low">
-            <div className="text-xs text-text-low mb-2 uppercase tracking-wide">Recently Verified</div>
+            <div className="text-xs text-text-low mb-2 uppercase tracking-wide">Recent Activity</div>
             <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-styled">
               {recentResources.map((resource, index) => (
                 <ResourceRow key={`${resource.path}-${index}`} path={resource.path} status={resource.status} />
