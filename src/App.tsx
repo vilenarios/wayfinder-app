@@ -17,6 +17,7 @@ import {
   type VerificationStats,
 } from './components/VerificationBadge';
 import { VerificationBlockedModal } from './components/VerificationBlockedModal';
+import { VerificationLoadingScreen } from './components/VerificationLoadingScreen';
 import { swMessenger } from './utils/serviceWorkerMessaging';
 import { getTrustedGateways, getRoutingGateways } from './utils/trustedGateways';
 import type { VerificationEvent } from './service-worker/types';
@@ -193,6 +194,14 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [userBypassedVerification, setUserBypassedVerification] = useState(false);
 
+  // Additional verification loading screen state
+  const [verificationPhase, setVerificationPhase] = useState<'idle' | 'resolving' | 'fetching-manifest' | 'verifying' | 'complete'>('idle');
+  const [routingGateway, setRoutingGateway] = useState<string | null>(null);
+  const [verificationStartTime, setVerificationStartTime] = useState<number | null>(null);
+  const [manifestTxId, setManifestTxId] = useState<string | null>(null);
+  const [isSingleFileContent, setIsSingleFileContent] = useState(false);
+  const [recentVerifiedResources, setRecentVerifiedResources] = useState<Array<{ path: string; status: 'verified' | 'failed' | 'verifying' }>>([]);
+
   // On mount, check URL for search query and auto-execute
   useEffect(() => {
     // Initialize from URL query parameter - this is the correct pattern for URL-based initialization
@@ -295,6 +304,9 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
             ? `${vEvent.gatewayUrl}/${vEvent.identifier}`
             : `https://${vEvent.identifier}.${gatewayHost}`;
           setResolvedUrl(fullUrl);
+          // Store gateway for loading screen
+          setRoutingGateway(vEvent.gatewayUrl);
+          setVerificationPhase('fetching-manifest');
         }
 
         // Handle verification-started
@@ -308,6 +320,12 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
           setVerificationError(undefined);
           setShowBlockedModal(false);
           setUserBypassedVerification(false);
+          // Initialize loading screen state
+          setVerificationPhase('resolving');
+          setVerificationStartTime(Date.now());
+          setManifestTxId(null);
+          setIsSingleFileContent(false);
+          setRecentVerifiedResources([]);
         }
 
         // Handle verification-progress
@@ -318,6 +336,14 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
             verified: vEvent.progress!.current,
             currentResource: vEvent.resourcePath,
           }));
+          // Add to recent resources list (keep last 8)
+          if (vEvent.resourcePath) {
+            setRecentVerifiedResources(prev => {
+              const newList = [...prev.filter(r => r.path !== vEvent.resourcePath)];
+              newList.push({ path: vEvent.resourcePath!, status: 'verified' });
+              return newList.slice(-8);
+            });
+          }
         }
 
         // Handle manifest-loaded - we now know total resources
@@ -326,6 +352,10 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
             ...prev,
             total: vEvent.progress!.total,
           }));
+          // Update loading screen state
+          setManifestTxId(vEvent.manifestTxId || null);
+          setIsSingleFileContent(vEvent.isSingleFile ?? vEvent.progress!.total === 1);
+          setVerificationPhase('verifying');
         }
 
         // Handle verification-complete
@@ -344,6 +374,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
           if (!vEvent.error) {
             setVerificationState('verified');
           }
+          setVerificationPhase('complete');
         }
 
         // Handle verification-failed
@@ -355,6 +386,12 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
               ...prev,
               failed: prev.failed + 1,
             }));
+            // Add failed resource to recent list
+            setRecentVerifiedResources(prev => {
+              const newList = [...prev.filter(r => r.path !== vEvent.resourcePath)];
+              newList.push({ path: vEvent.resourcePath!, status: 'failed' });
+              return newList.slice(-8);
+            });
           }
           setVerificationError(vEvent.error);
 
@@ -362,6 +399,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
           // Use the progress from the event, not stale closure state
           const verifiedCount = vEvent.progress?.current ?? 0;
           setVerificationState(verifiedCount > 0 ? 'partial' : 'failed');
+          setVerificationPhase('complete');
 
           // Show blocked modal if strict mode is enabled and user hasn't bypassed
           if (config.strictVerification && !userBypassedVerification) {
@@ -389,6 +427,13 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setVerificationError(undefined);
     setShowBlockedModal(false);
     setUserBypassedVerification(false);
+    // Reset loading screen state
+    setVerificationPhase('idle');
+    setRoutingGateway(null);
+    setVerificationStartTime(null);
+    setManifestTxId(null);
+    setIsSingleFileContent(false);
+    setRecentVerifiedResources([]);
 
     // Clear verification state in service worker so it re-verifies fresh
     // This prevents stale cached verification from being reused
@@ -417,6 +462,13 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setVerificationError(undefined);
     setShowBlockedModal(false);
     setUserBypassedVerification(false);
+    // Reset loading screen state
+    setVerificationPhase('idle');
+    setRoutingGateway(null);
+    setVerificationStartTime(null);
+    setManifestTxId(null);
+    setIsSingleFileContent(false);
+    setRecentVerifiedResources([]);
 
     // Clear verification state in service worker so it re-verifies fresh
     // This is important because isVerificationComplete() returns true for 'partial' status
@@ -537,8 +589,27 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         <div className="flex-1 overflow-hidden relative" key="content-viewer-container">
           {config.verificationEnabled && swReady ? (
             <>
-              {/* Show iframe unless content is blocked */}
-              {!shouldBlockContent && (
+              {/* Show loading screen while verification is in progress (or idle - awaiting start) */}
+              {(verificationState === 'verifying' || verificationState === 'idle') && (
+                <VerificationLoadingScreen
+                  identifier={searchInput}
+                  phase={verificationPhase === 'idle' || verificationPhase === 'complete' ? 'resolving' : verificationPhase}
+                  manifestTxId={manifestTxId || undefined}
+                  gateway={routingGateway || undefined}
+                  progress={{
+                    current: verificationStats.verified,
+                    total: verificationStats.total,
+                    failed: verificationStats.failed,
+                  }}
+                  recentResources={recentVerifiedResources}
+                  startTime={verificationStartTime}
+                  isSingleFile={isSingleFileContent}
+                />
+              )}
+
+              {/* Show iframe once verification completes (or partial/failed in non-strict mode) */}
+              {/* Note: Also don't show iframe when idle - verification hasn't started yet */}
+              {verificationState !== 'verifying' && verificationState !== 'idle' && !shouldBlockContent && (
                 <iframe
                   key={`${searchInput}-${searchCounter}`}
                   src={`/ar-proxy/${searchInput}/`}

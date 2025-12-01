@@ -168,11 +168,22 @@ Settings are stored in localStorage with the key `wayfinder-app-config` (src/uti
 When `verificationEnabled` is true, the app uses a service worker to verify Arweave content integrity:
 
 **Architecture** (src/service-worker/):
-- `service-worker.ts`: Main fetch interceptor that proxies `/ar-proxy` requests
+- `service-worker.ts`: Main fetch interceptor that proxies `/ar-proxy` requests and intercepts absolute paths for manifest-based apps
+- `manifest-verifier.ts`: Orchestrates verification flow - resolves ArNS, fetches/verifies manifest, verifies all resources
+- `verification-state.ts`: Tracks verification state, progress, and broadcasts events to the UI
+- `verified-cache.ts`: LRU cache for verified content (100MB limit)
 - `wayfinder-instance.ts`: Maintains Wayfinder instance within service worker context
-- `manifest-resolver.ts`: Parses and resolves Arweave manifest paths to transaction IDs
-- `context-tracker.ts`: Tracks iframe context for nested resource resolution
-- `verification-tracker.ts`: Records verification success/failure for manifest resources
+- `types.ts`: TypeScript interfaces for manifest structure, verification state, and events
+
+**Security Model**:
+- ArNS names are resolved via trusted gateways with consensus checking
+- **Manifest content is cryptographically verified BEFORE trusting path→txId mappings**
+  - Fetches raw content from routing gateway
+  - Computes SHA-256 hash locally
+  - Verifies hash against trusted gateway (tries one at a time until success)
+  - Only parses manifest JSON after hash verification passes
+- All individual resources are verified against trusted gateways before serving
+- Single files (non-manifests) are verified the same way but don't have sub-resources
 
 **Dual Gateway Pools** (src/utils/trustedGateways.ts):
 - `getTrustedGateways()`: Top 3 gateways by total stake (operator + delegated) for hash verification
@@ -180,16 +191,40 @@ When `verificationEnabled` is true, the app uses a service worker to verify Arwe
   - Uses `@ar.io/sdk` to query AR.IO network
 - `getRoutingGateways()`: Broader pool from arweave.net/ar-io/peers for content fetching
   - Randomly selects 20 gateways from available peers
+  - Shuffled on each verification for load distribution
   - Provides fallback if trusted gateway fetch fails
 
-**Flow**:
-1. User enables verification in settings → triggers service worker registration (App.tsx:211-263)
+**Verification Flow**:
+1. User enables verification in settings → triggers service worker registration
 2. App fetches trusted gateways (for verification) and routing gateways (for content)
-3. App uses `swMessenger.initializeWayfinder()` to configure Wayfinder in service worker with both gateway pools
-4. ContentViewer is bypassed; iframe loads `/ar-proxy/{arns-or-txid}/` (App.tsx:370-379)
-5. Service worker intercepts request, fetches via routing gateways, verifies against trusted gateways
-6. For manifests, parses paths and intercepts nested resource requests
-7. `VerificationStatus` component shows current verification state
+3. App uses `swMessenger.initializeWayfinder()` to configure service worker
+4. User searches → iframe loads `/ar-proxy/{arns-or-txid}/`
+5. Service worker intercepts:
+   - Resolves ArNS name to txId via trusted gateways (consensus)
+   - Selects a responsive routing gateway (HEAD request)
+   - Fetches raw content, computes hash, verifies against trusted gateway
+   - For manifests: parses paths, verifies all resources in parallel
+   - For single files: marks as verified immediately
+6. Verified content served from cache
+7. For manifest-based apps with absolute paths (e.g., `/assets/foo.js`):
+   - Service worker tracks "active identifier"
+   - Intercepts non-navigate requests matching manifest paths
+   - Does NOT intercept for single-file content (isSingleFile flag)
+
+**State Tracking** (verification-state.ts):
+- `ManifestVerificationState`: Tracks identifier, manifestTxId, status, progress, pathToTxId map
+- `isSingleFile` flag: Distinguishes single files from manifests (affects absolute path interception)
+- `activeIdentifier`: Tracks which content is currently being served (for absolute path interception)
+- Events broadcast to UI: `verification-started`, `routing-gateway`, `manifest-loaded`, `verification-progress`, `verification-complete`, `verification-failed`
+
+**UI Components**:
+- `VerificationLoadingScreen`: Full-screen loading overlay shown during verification
+  - Displays phase indicators (Resolving → Fetching manifest → Verifying)
+  - Shows progress bar and recently verified resources
+  - Displays gateway and elapsed time
+  - Different layout for single files vs manifests
+- `VerificationBadge`: Compact badge in header showing verification status
+- `VerificationBlockedModal`: Modal shown when strict mode blocks failed verification
 
 **Service Worker Registration**:
 - Uses `vite-plugin-pwa` with `injectManifest` strategy
@@ -202,6 +237,7 @@ When `verificationEnabled` is true, the app uses a service worker to verify Arwe
 - `swMessenger.register(url)`: Register and wait for controller
 - `swMessenger.initializeWayfinder(config)`: Send config to service worker
 - `swMessenger.clearCache()`: Clear all caches in service worker
+- `swMessenger.clearVerification(identifier)`: Clear verification state for a specific identifier
 
 ## Design System
 

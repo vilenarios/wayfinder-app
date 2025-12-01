@@ -135,6 +135,7 @@ export function setManifestLoaded(
     identifier,
     manifestTxId: state.manifestTxId,
     progress: { current: 0, total: state.totalResources },
+    isSingleFile: state.isSingleFile,
   });
 }
 

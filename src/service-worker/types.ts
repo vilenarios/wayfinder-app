@@ -60,6 +60,7 @@ export interface VerificationEvent {
   };
   error?: string;
   gatewayUrl?: string;
+  isSingleFile?: boolean;         // True if content is a single file (not a manifest)
 }
 
 // Keep old txId field for backwards compatibility
