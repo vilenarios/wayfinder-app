@@ -384,7 +384,9 @@ async function verifyAllResources(
       await Promise.race(activePromises);
     }
 
-    const promise = verifyAndCacheResource(identifier, entry.id, path)
+    // Handle both formats: { id: string } and raw string txId
+    const txId = typeof entry === 'string' ? entry : entry.id;
+    const promise = verifyAndCacheResource(identifier, txId, path)
       .catch(() => { /* Errors already logged */ });
 
     activePromises.add(promise);
@@ -492,10 +494,15 @@ export async function verifyIdentifier(
  * Get verified content for a path.
  * Returns null if not found or not verified.
  * Works for 'complete' and 'partial' status (serves verified resources even if some failed).
+ *
+ * @param identifier - The ArNS name or txId
+ * @param path - The resource path within the manifest
+ * @param injectLocationPatch - Optional function to patch HTML content with location override
  */
 export function getVerifiedContent(
   identifier: string,
-  path: string
+  path: string,
+  injectLocationPatch?: (html: string, identifier: string, gatewayUrl: string) => string
 ): Response | null {
   const state = getManifestState(identifier);
   if (!state || (state.status !== 'complete' && state.status !== 'partial')) {
@@ -526,6 +533,38 @@ export function getVerifiedContent(
   if (!resource) {
     logger.warn(TAG, `Cache miss: ${txId.slice(0, 8)}...`);
     return null;
+  }
+
+  // If this is HTML and we have a location patcher, inject the patch
+  if (injectLocationPatch && state.routingGateway) {
+    const contentType = resource.contentType.toLowerCase();
+    if (contentType.includes('text/html')) {
+      try {
+        const html = new TextDecoder().decode(resource.data);
+        const patchedHtml = injectLocationPatch(html, identifier, state.routingGateway);
+        const patchedData = new TextEncoder().encode(patchedHtml);
+
+        // Create response with patched content
+        const headers = new Headers();
+        Object.entries(resource.headers).forEach(([key, value]) => {
+          headers.set(key, value);
+        });
+        if (!headers.has('content-type')) {
+          headers.set('content-type', resource.contentType);
+        }
+        headers.set('x-wayfinder-verified', 'true');
+        headers.set('x-wayfinder-verified-at', resource.verifiedAt.toString());
+        headers.set('x-wayfinder-location-patched', 'true');
+
+        return new Response(patchedData, {
+          status: 200,
+          headers,
+        });
+      } catch (e) {
+        logger.warn(TAG, `Failed to patch HTML: ${e}`);
+        // Fall through to return unpatched response
+      }
+    }
   }
 
   return verifiedCache.toResponse(resource);

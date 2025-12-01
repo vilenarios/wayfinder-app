@@ -115,9 +115,13 @@ export function setManifestLoaded(
   state.isSingleFile = isSingleFile;
 
   // Build path → txId mapping
+  // Handle both formats: { id: string } and raw string txId
   state.pathToTxId.clear();
   for (const [path, entry] of Object.entries(manifest.paths)) {
-    state.pathToTxId.set(path, entry.id);
+    const txId = typeof entry === 'string' ? entry : entry.id;
+    if (txId) {
+      state.pathToTxId.set(path, txId);
+    }
   }
 
   // Include fallback if present

@@ -5,7 +5,7 @@ export interface ArweaveManifest {
   manifest: 'arweave/paths';
   version: string;
   index?: { path: string };
-  paths: Record<string, ManifestPath>;
+  paths: Record<string, ManifestPath | string>;  // Can be { id: string } or just the txId string
   fallback?: { id: string };
 }
 

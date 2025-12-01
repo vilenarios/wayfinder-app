@@ -33,6 +33,7 @@ import {
 } from './verification-state';
 import { verifiedCache } from './verified-cache';
 import { logger } from './logger';
+import { injectLocationPatch } from './location-patcher';
 import type { SwWayfinderConfig } from './types';
 
 const TAG = 'SW';
@@ -357,6 +358,8 @@ async function waitForVerification(identifier: string): Promise<void> {
 /**
  * Serve a resource from the verified cache.
  * Works for 'complete' and 'partial' status.
+ * For HTML content, injects a location patch script to make the app
+ * think it's running at the gateway subdomain.
  */
 function serveFromCache(identifier: string, resourcePath: string): Response {
   const state = getManifestState(identifier);
@@ -374,7 +377,8 @@ function serveFromCache(identifier: string, resourcePath: string): Response {
     return createErrorResponse('Verification In Progress', 'Please wait while content is being verified.', identifier);
   }
 
-  const response = getVerifiedContent(identifier, resourcePath);
+  // Pass the location patcher to inject into HTML responses
+  const response = getVerifiedContent(identifier, resourcePath, injectLocationPatch);
 
   if (!response) {
     logger.warn(TAG, `Resource not found: ${identifier}/${resourcePath}`);
