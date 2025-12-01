@@ -11,6 +11,16 @@ import { WayfinderConfigProvider, useWayfinderConfig } from './context/Wayfinder
 import { SearchBar } from './components/SearchBar';
 import { ContentViewer } from './components/ContentViewer';
 import { SettingsFlyout } from './components/SettingsFlyout';
+import {
+  VerificationBadge,
+  type VerificationState,
+  type VerificationStats,
+} from './components/VerificationBadge';
+import { VerificationBlockedModal } from './components/VerificationBlockedModal';
+import { VerificationLoadingScreen } from './components/VerificationLoadingScreen';
+import { swMessenger } from './utils/serviceWorkerMessaging';
+import { getTrustedGateways, getRoutingGateways } from './utils/trustedGateways';
+import type { VerificationEvent } from './service-worker/types';
 
 // Separate component that only handles Wayfinder configuration
 function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React.ReactNode; gatewayRefreshCounter: number }) {
@@ -66,22 +76,19 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
             const provider = new TrustedPeersGatewaysProvider({ trustedGateway });
             const gateways = await provider.getGateways();
             if (gateways && gateways.length > 0) {
-              console.log(`Successfully fetched ${gateways.length} gateways from ${trustedGateway}`);
               return gateways;
             }
-          } catch (error) {
-            console.warn(`Failed to fetch gateways from ${trustedGateway}:`, error);
+          } catch {
+            // Try next endpoint
           }
         }
 
         // If all peers endpoints fail, just use the host gateway itself
         if (hostGateway) {
-          console.warn('All peers endpoints failed, using host gateway directly:', hostGateway);
           return [hostGateway];
         }
 
         // Ultimate fallback for local development
-        console.warn('No host gateway detected (localhost?), using arweave.net as fallback');
         return [new URL('https://arweave.net')];
       },
     };
@@ -165,6 +172,7 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
 }
 
 function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: number; setGatewayRefreshCounter: (fn: (prev: number) => number) => void }) {
+  const { config } = useWayfinderConfig();
   const [searchInput, setSearchInput] = useState('');
   const [isSearched, setIsSearched] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -173,6 +181,27 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchCounter, setSearchCounter] = useState(0);
   const [retryAttempts, setRetryAttempts] = useState(0);
+  const [swReady, setSwReady] = useState(false);
+
+  // Verification state tracking
+  const [verificationState, setVerificationState] = useState<VerificationState>('idle');
+  const [verificationStats, setVerificationStats] = useState<VerificationStats>({
+    total: 0,
+    verified: 0,
+    failed: 0,
+    failedResources: [],
+  });
+  const [verificationError, setVerificationError] = useState<string | undefined>();
+  const [showBlockedModal, setShowBlockedModal] = useState(false);
+  const [userBypassedVerification, setUserBypassedVerification] = useState(false);
+
+  // Additional verification loading screen state
+  const [verificationPhase, setVerificationPhase] = useState<'idle' | 'resolving' | 'fetching-manifest' | 'verifying' | 'complete'>('idle');
+  const [routingGateway, setRoutingGateway] = useState<string | null>(null);
+  const [verificationStartTime, setVerificationStartTime] = useState<number | null>(null);
+  const [manifestTxId, setManifestTxId] = useState<string | null>(null);
+  const [isSingleFileContent, setIsSingleFileContent] = useState(false);
+  const [recentVerifiedResources, setRecentVerifiedResources] = useState<Array<{ path: string; status: 'verified' | 'failed' | 'verifying' }>>([]);
 
   // On mount, check URL for search query and auto-execute
   useEffect(() => {
@@ -202,7 +231,199 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const handleSearch = useCallback((input: string) => {
+  // Initialize service worker for verification
+  // Note: SW is registered proactively in main.tsx at app startup
+  useEffect(() => {
+    async function initServiceWorker() {
+      if (!config.verificationEnabled) {
+        setSwReady(false);
+        return;
+      }
+
+      try {
+        // Wait for SW to be controlling (should already be from proactive registration)
+        // This handles edge cases where the effect runs before registration completes
+        if (!swMessenger.isControlling()) {
+          // Give SW a moment to take control (proactive registration is in progress)
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          if (!swMessenger.isControlling()) {
+            console.warn('[SW] Controller not ready yet - will retry on next render');
+            setSwReady(false);
+            return;
+          }
+        }
+
+        // Get trusted gateways (top-staked, for hash verification)
+        const trustedGateways = await getTrustedGateways();
+
+        // Get routing gateways (broader pool, for content fetching)
+        const routingGateways = await getRoutingGateways();
+
+        // Initialize Wayfinder in service worker
+        await swMessenger.initializeWayfinder({
+          trustedGateways: trustedGateways.map(u => u.toString()),
+          routingGateways: routingGateways.map(u => u.toString()),
+          routingStrategy: config.routingStrategy,
+          preferredGateway: config.preferredGateway,
+          enabled: true,
+          strict: config.strictVerification,
+          concurrency: config.verificationConcurrency,
+          verificationMethod: config.verificationMethod,
+        });
+
+        setSwReady(true);
+
+      } catch (error) {
+        console.error('[SW] Initialization failed:', error);
+        setSwReady(false);
+      }
+    }
+
+    initServiceWorker();
+  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway, config.strictVerification, config.verificationConcurrency, config.verificationMethod]);
+
+  // Listen for service worker messages (routing gateway, verification events)
+  useEffect(() => {
+    if (!config.verificationEnabled) return;
+
+    const handleSwMessage = (event: MessageEvent) => {
+      const { type, event: verificationEvent } = event.data;
+      if (type === 'VERIFICATION_EVENT' && verificationEvent) {
+        const vEvent = verificationEvent as VerificationEvent;
+
+        // Handle routing gateway event - update the resolved URL display
+        if (vEvent.type === 'routing-gateway' && vEvent.gatewayUrl) {
+          // For ArNS names, show the subdomain format (e.g., vilenarios.saveario.site)
+          // For txIds (43 chars), show the path format (e.g., saveario.site/{txId})
+          const isTxId = /^[A-Za-z0-9_-]{43}$/.test(vEvent.identifier);
+          const gatewayHost = new URL(vEvent.gatewayUrl).host;
+          const fullUrl = isTxId
+            ? `${vEvent.gatewayUrl}/${vEvent.identifier}`
+            : `https://${vEvent.identifier}.${gatewayHost}`;
+          setResolvedUrl(fullUrl);
+          // Store gateway for loading screen
+          setRoutingGateway(vEvent.gatewayUrl);
+          setVerificationPhase('fetching-manifest');
+        }
+
+        // Handle verification-started
+        if (vEvent.type === 'verification-started') {
+          setVerificationState('verifying');
+          setVerificationStats({
+            total: vEvent.progress?.total || 1,
+            verified: 0,
+            failed: 0,
+          });
+          setVerificationError(undefined);
+          setShowBlockedModal(false);
+          setUserBypassedVerification(false);
+          // Initialize loading screen state
+          setVerificationPhase('resolving');
+          setVerificationStartTime(Date.now());
+          setManifestTxId(null);
+          setIsSingleFileContent(false);
+          setRecentVerifiedResources([]);
+        }
+
+        // Handle verification-progress
+        if (vEvent.type === 'verification-progress' && vEvent.progress) {
+          setVerificationStats(prev => ({
+            ...prev,
+            total: vEvent.progress!.total,
+            verified: vEvent.progress!.current,
+            currentResource: vEvent.resourcePath,
+          }));
+          // Add to recent resources list (keep last 8)
+          if (vEvent.resourcePath) {
+            setRecentVerifiedResources(prev => {
+              const newList = [...prev.filter(r => r.path !== vEvent.resourcePath)];
+              newList.push({ path: vEvent.resourcePath!, status: 'verified' });
+              return newList.slice(-8);
+            });
+          }
+        }
+
+        // Handle manifest-loaded - we now know total resources
+        if (vEvent.type === 'manifest-loaded' && vEvent.progress) {
+          setVerificationStats(prev => ({
+            ...prev,
+            total: vEvent.progress!.total,
+          }));
+          // Update loading screen state
+          setManifestTxId(vEvent.manifestTxId || null);
+          setIsSingleFileContent(vEvent.isSingleFile ?? vEvent.progress!.total === 1);
+          setVerificationPhase('verifying');
+        }
+
+        // Handle verification-complete
+        // Note: This event fires even when some resources failed
+        if (vEvent.type === 'verification-complete') {
+          if (vEvent.progress) {
+            setVerificationStats(prev => ({
+              ...prev,
+              total: vEvent.progress!.total,
+              verified: vEvent.progress!.current,
+            }));
+          }
+
+          // Determine final state based on whether there were failures
+          if (vEvent.error) {
+            // Some resources failed - check if any succeeded
+            const verifiedCount = vEvent.progress?.current ?? 0;
+            setVerificationState(verifiedCount > 0 ? 'partial' : 'failed');
+            setVerificationError(vEvent.error);
+
+            // Show blocked modal if strict mode is enabled and user hasn't bypassed
+            if (config.strictVerification && !userBypassedVerification) {
+              setShowBlockedModal(true);
+            }
+          } else {
+            setVerificationState('verified');
+          }
+          setVerificationPhase('complete');
+        }
+
+        // Handle verification-failed
+        if (vEvent.type === 'verification-failed') {
+          // Resource-level failure (has resourcePath) - just one resource failed
+          // Top-level failure (no resourcePath) - entire verification failed
+          if (vEvent.resourcePath) {
+            // Individual resource failure - update stats but don't change phase
+            // Verification is still in progress, more resources may be processing
+            setVerificationStats(prev => ({
+              ...prev,
+              failed: prev.failed + 1,
+              failedResources: [...(prev.failedResources || []), vEvent.resourcePath!],
+            }));
+            // Add failed resource to recent list
+            setRecentVerifiedResources(prev => {
+              const newList = [...prev.filter(r => r.path !== vEvent.resourcePath)];
+              newList.push({ path: vEvent.resourcePath!, status: 'failed' });
+              return newList.slice(-8);
+            });
+            // Don't set error or change state - wait for verification-complete
+          } else {
+            // Top-level failure (ArNS resolution, manifest fetch, etc.)
+            // This means verification cannot proceed at all
+            setVerificationError(vEvent.error);
+            setVerificationState('failed');
+            setVerificationPhase('complete');
+
+            // Show blocked modal if strict mode is enabled and user hasn't bypassed
+            if (config.strictVerification && !userBypassedVerification) {
+              setShowBlockedModal(true);
+            }
+          }
+        }
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+  }, [config.verificationEnabled, config.strictVerification, userBypassedVerification]);
+
+  const handleSearch = useCallback(async (input: string) => {
     setSearchInput(input);
     setIsSearched(true);
     setIsCollapsed(false); // Expand when doing a new search
@@ -210,22 +431,70 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setRetryAttempts(0); // Reset retry attempts for new search
     setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
+    // Reset verification state for new search
+    setVerificationState('idle');
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
+    setVerificationError(undefined);
+    setShowBlockedModal(false);
+    setUserBypassedVerification(false);
+    // Reset loading screen state
+    setVerificationPhase('idle');
+    setRoutingGateway(null);
+    setVerificationStartTime(null);
+    setManifestTxId(null);
+    setIsSingleFileContent(false);
+    setRecentVerifiedResources([]);
+
+    // Clear verification state in service worker so it re-verifies fresh
+    // This prevents stale cached verification from being reused
+    if (config.verificationEnabled && input) {
+      try {
+        await swMessenger.clearVerification(input);
+      } catch {
+        // Non-critical - verification will still work
+      }
+    }
+
     // Update URL with search query
     const url = new URL(window.location.href);
     url.searchParams.set('q', input);
     window.history.pushState({}, '', url.toString());
-  }, []);
+  }, [config.verificationEnabled]);
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = useCallback(async () => {
     // Increment retry attempts
     const newAttempts = retryAttempts + 1;
     setRetryAttempts(newAttempts);
+
+    // Reset verification state for retry
+    setVerificationState('idle');
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
+    setVerificationError(undefined);
+    setShowBlockedModal(false);
+    setUserBypassedVerification(false);
+    // Reset loading screen state
+    setVerificationPhase('idle');
+    setRoutingGateway(null);
+    setVerificationStartTime(null);
+    setManifestTxId(null);
+    setIsSingleFileContent(false);
+    setRecentVerifiedResources([]);
+
+    // Clear verification state in service worker so it re-verifies fresh
+    // This is important because isVerificationComplete() returns true for 'partial' status
+    if (config.verificationEnabled && searchInput) {
+      try {
+        await swMessenger.clearVerification(searchInput);
+      } catch {
+        // Non-critical - verification will still retry
+      }
+    }
 
     // Every retry forces fresh gateway selection by incrementing gatewayRefreshCounter
     // This busts the cache and gets a new random set of gateways
     setGatewayRefreshCounter((prev) => prev + 1);
     setSearchCounter((prev) => prev + 1);
-  }, [retryAttempts, setGatewayRefreshCounter]);
+  }, [retryAttempts, setGatewayRefreshCounter, config.verificationEnabled, searchInput]);
 
   const handleOpenInNewTab = useCallback(() => {
     if (resolvedUrl) {
@@ -259,6 +528,29 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setIsSettingsOpen(true);
   }, []);
 
+  // Modal action handlers for verification blocked modal
+  const handleGoBack = useCallback(() => {
+    // Clear the search and go back to the home state
+    setSearchInput('');
+    setIsSearched(false);
+    setShowBlockedModal(false);
+    setVerificationState('idle');
+    setVerificationStats({ total: 0, verified: 0, failed: 0, failedResources: [] });
+    setVerificationError(undefined);
+    setUserBypassedVerification(false);
+
+    // Update URL to remove query param
+    const url = new URL(window.location.href);
+    url.searchParams.delete('q');
+    window.history.pushState({}, '', url.toString());
+  }, []);
+
+  const handleProceedAnyway = useCallback(() => {
+    // User has acknowledged the risk and wants to proceed
+    setUserBypassedVerification(true);
+    setShowBlockedModal(false);
+  }, []);
+
   // Auto-open in new tab when URL resolves and flag is set
   useEffect(() => {
     if (shouldAutoOpenInNewTab && resolvedUrl) {
@@ -268,6 +560,27 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
       setShouldAutoOpenInNewTab(false);
     }
   }, [shouldAutoOpenInNewTab, resolvedUrl]);
+
+  // Determine if content should be blocked (strict mode + verification failed + user hasn't bypassed)
+  const shouldBlockContent = config.verificationEnabled &&
+    config.strictVerification &&
+    (verificationState === 'failed' || verificationState === 'partial') &&
+    !userBypassedVerification;
+
+  // Create the verification badge element if needed
+  // Only show after verification completes (not during 'idle' or 'verifying')
+  // The loading screen already shows progress during verification
+  const verificationBadgeElement = config.verificationEnabled &&
+    isSearched &&
+    searchInput &&
+    verificationState !== 'idle' &&
+    verificationState !== 'verifying' ? (
+      <VerificationBadge
+        state={verificationState}
+        stats={verificationStats}
+        strictMode={config.strictVerification}
+      />
+    ) : undefined;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -282,18 +595,90 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         onOpenSettings={handleOpenSettings}
         hasResolvedUrl={!!resolvedUrl}
         resolvedUrl={resolvedUrl}
+        verificationBadge={verificationBadgeElement}
       />
 
       {isSearched && searchInput && (
-        <div className="flex-1 overflow-hidden" key="content-viewer-container">
-          <ContentViewer
-            key={`${searchInput}-${searchCounter}`}
-            input={searchInput}
-            onRetry={handleRetry}
-            onUrlResolved={handleUrlResolved}
-            retryAttempts={retryAttempts}
-          />
+        <div className="flex-1 overflow-hidden relative" key="content-viewer-container">
+          {config.verificationEnabled && swReady ? (
+            <>
+              {/* Show loading screen while verification is in progress (or idle - awaiting start) */}
+              {(verificationState === 'verifying' || verificationState === 'idle') && (
+                <VerificationLoadingScreen
+                  identifier={searchInput}
+                  phase={verificationPhase === 'idle' || verificationPhase === 'complete' ? 'resolving' : verificationPhase}
+                  manifestTxId={manifestTxId || undefined}
+                  gateway={routingGateway || undefined}
+                  progress={{
+                    current: verificationStats.verified,
+                    total: verificationStats.total,
+                    failed: verificationStats.failed,
+                  }}
+                  recentResources={recentVerifiedResources}
+                  startTime={verificationStartTime}
+                  isSingleFile={isSingleFileContent}
+                />
+              )}
+
+              {/*
+                iframe MUST always be rendered to trigger the service worker.
+                Hide it visually during verification, show once complete.
+                The iframe src triggers the /ar-proxy/ fetch which starts verification.
+              */}
+              {!shouldBlockContent && (
+                <iframe
+                  key={`${searchInput}-${searchCounter}`}
+                  src={`/ar-proxy/${searchInput}/`}
+                  className={`w-full h-full border-0 ${
+                    verificationState === 'verifying' || verificationState === 'idle'
+                      ? 'invisible absolute'
+                      : ''
+                  }`}
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  title={`Verified content for ${searchInput}`}
+                />
+              )}
+
+              {/* Show blocked placeholder when content is blocked */}
+              {shouldBlockContent && (
+                <div className="w-full h-full flex items-center justify-center bg-container-L1">
+                  <div className="text-center p-8">
+                    <div className="text-6xl mb-4">🛡️</div>
+                    <div className="text-xl font-semibold text-text-high mb-2">
+                      Content Blocked
+                    </div>
+                    <div className="text-text-low max-w-md">
+                      Verification failed and strict mode is enabled.
+                      Use the dialog to retry, go back, or proceed at your own risk.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            // Direct gateway URL (no verification)
+            <ContentViewer
+              key={`${searchInput}-${searchCounter}`}
+              input={searchInput}
+              onRetry={handleRetry}
+              onUrlResolved={handleUrlResolved}
+              retryAttempts={retryAttempts}
+            />
+          )}
         </div>
+      )}
+
+      {/* Verification Blocked Modal */}
+      {showBlockedModal && (
+        <VerificationBlockedModal
+          identifier={searchInput}
+          errorMessage={verificationError}
+          failedCount={verificationStats.failed}
+          totalCount={verificationStats.total}
+          onGoBack={handleGoBack}
+          onRetry={handleRetry}
+          onProceedAnyway={handleProceedAnyway}
+        />
       )}
 
       <SettingsFlyout isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
