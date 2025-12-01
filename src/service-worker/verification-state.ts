@@ -67,6 +67,7 @@ export function startManifestVerification(identifier: string): ManifestVerificat
     failedResources: [],
     pathToTxId: new Map(),
     indexPath: 'index.html',
+    isSingleFile: false,
     startedAt: Date.now(),
   };
 
@@ -98,10 +99,12 @@ export function setResolvedTxId(identifier: string, manifestTxId: string, gatewa
 
 /**
  * Update state after manifest is parsed.
+ * @param isSingleFile - True if this is a single file (not a real manifest)
  */
 export function setManifestLoaded(
   identifier: string,
-  manifest: ArweaveManifest
+  manifest: ArweaveManifest,
+  isSingleFile: boolean = false
 ): void {
   const state = manifestStates.get(identifier);
   if (!state) return;
@@ -109,6 +112,7 @@ export function setManifestLoaded(
   state.manifest = manifest;
   state.status = 'verifying';
   state.indexPath = manifest.index?.path || 'index.html';
+  state.isSingleFile = isSingleFile;
 
   // Build path → txId mapping
   state.pathToTxId.clear();
@@ -318,6 +322,12 @@ export function getActiveTxIdForPath(path: string): string | null {
 
   const state = manifestStates.get(activeIdentifier);
   if (!state?.pathToTxId) return null;
+
+  // Never intercept absolute paths for single files - they have no sub-resources
+  // Only real manifests with multiple paths need absolute path interception
+  if (state.isSingleFile) {
+    return null;
+  }
 
   // Normalize path
   let normalizedPath = path.startsWith('/') ? path.slice(1) : path;

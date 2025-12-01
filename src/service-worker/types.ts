@@ -26,6 +26,7 @@ export interface ManifestVerificationState {
   failedResources: string[];    // List of txIds that failed verification
   pathToTxId: Map<string, string>;  // path → txId mapping for serving
   indexPath: string;            // The index path from manifest (e.g., "index.html")
+  isSingleFile: boolean;        // True if this is a single file (not a manifest with multiple paths)
   routingGateway?: string;      // Gateway used for fetching
   error?: string;
   startedAt: number;

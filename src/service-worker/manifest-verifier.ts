@@ -454,6 +454,8 @@ export async function verifyIdentifier(
 
     if (!isManifest) {
       // Single file - already verified and cached by fetchAndVerifyRawContent
+      // We create a synthetic manifest structure to reuse the same serving code,
+      // but mark it as isSingleFile so we don't try to intercept absolute paths
       const singleFileManifest: ArweaveManifest = {
         manifest: 'arweave/paths',
         version: '0.2.0',
@@ -461,7 +463,7 @@ export async function verifyIdentifier(
         paths: { 'index': { id: txId } },
       };
 
-      setManifestLoaded(identifier, singleFileManifest);
+      setManifestLoaded(identifier, singleFileManifest, true /* isSingleFile */);
       // Record as verified - this triggers completeVerification automatically
       // since verifiedResources (1) >= totalResources (1)
       recordResourceVerified(identifier, txId, 'index');
