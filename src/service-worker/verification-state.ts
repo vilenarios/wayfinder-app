@@ -305,12 +305,34 @@ export function getTxIdForPath(identifier: string, path: string): string | null 
 }
 
 /**
- * Check if a path exists in the active identifier's manifest.
+ * Check if a path exists EXPLICITLY in the active identifier's manifest.
  * Returns the txId if found, null otherwise.
+ *
+ * NOTE: This does NOT use the fallback mechanism. For absolute path interception,
+ * we only want to intercept paths that are explicitly in the manifest.
+ * Using fallback would cause us to intercept requests for scripts/resources
+ * that aren't part of the Arweave app (like external scripts, service workers, etc.)
  */
 export function getActiveTxIdForPath(path: string): string | null {
   if (!activeIdentifier) return null;
-  return getTxIdForPath(activeIdentifier, path);
+
+  const state = manifestStates.get(activeIdentifier);
+  if (!state?.pathToTxId) return null;
+
+  // Normalize path
+  let normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+  if (normalizedPath === '' || normalizedPath === '/') {
+    normalizedPath = state.indexPath;
+  } else if (normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath + state.indexPath;
+  }
+
+  // Only return if path is explicitly in manifest (no fallback)
+  if (state.pathToTxId.has(normalizedPath)) {
+    return state.pathToTxId.get(normalizedPath)!;
+  }
+
+  return null;
 }
 
 /**
