@@ -560,10 +560,13 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     !userBypassedVerification;
 
   // Create the verification badge element if needed
+  // Only show after verification completes (not during 'idle' or 'verifying')
+  // The loading screen already shows progress during verification
   const verificationBadgeElement = config.verificationEnabled &&
     isSearched &&
     searchInput &&
-    verificationState !== 'idle' ? (
+    verificationState !== 'idle' &&
+    verificationState !== 'verifying' ? (
       <VerificationBadge
         state={verificationState}
         stats={verificationStats}
