@@ -1,8 +1,9 @@
-import { useEffect, useMemo, memo, useRef } from 'react';
+import { useEffect, useMemo, useState, memo, useRef } from 'react';
 import { useWayfinderUrl } from '@ar.io/wayfinder-react';
-import { LoadingSpinner } from './LoadingSpinner';
+import { RoutingLoadingScreen } from './RoutingLoadingScreen';
 import { ErrorDisplay } from './ErrorDisplay';
 import { detectInputType } from '../utils/detectInputType';
+import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 
 interface ContentViewerProps {
   input: string;
@@ -14,6 +15,12 @@ interface ContentViewerProps {
 export const ContentViewer = memo(function ContentViewer({ input, onRetry, onUrlResolved, retryAttempts = 0 }: ContentViewerProps) {
   const inputType = detectInputType(input);
   const hasAutoRetried = useRef(false);
+  const { config } = useWayfinderConfig();
+
+  // Track when this component mounted (for elapsed time display)
+  // Since component is keyed by `${searchInput}-${searchCounter}`, it remounts on each search
+  // useState lazy initializer ensures this only runs once on mount
+  const [mountTime] = useState(() => Date.now());
 
   // Memoize params to prevent unnecessary re-resolutions
   const params = useMemo(
@@ -60,12 +67,13 @@ export const ContentViewer = memo(function ContentViewer({ input, onRetry, onUrl
 
   if (isLoading) {
     return (
-      <LoadingSpinner
-        message={
-          inputType === 'arnsName'
-            ? `Resolving ArNS name "${input}"...`
-            : 'Loading content from Arweave...'
-        }
+      <RoutingLoadingScreen
+        identifier={input}
+        inputType={inputType}
+        routingStrategy={config.routingStrategy}
+        preferredGateway={config.preferredGateway}
+        startTime={mountTime}
+        onRetry={onRetry}
       />
     );
   }

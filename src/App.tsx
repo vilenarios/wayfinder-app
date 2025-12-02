@@ -101,7 +101,6 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
         // Shuffle the gateways array using Fisher-Yates algorithm
         const shuffled = [...allGateways];
         for (let i = shuffled.length - 1; i > 0; i--) {
-          // eslint-disable-next-line react-hooks/purity
           const j = Math.floor(Math.random() * (i + 1));
           [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
@@ -158,6 +157,7 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
         enabled: false, // Disabled as per requirements
       },
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- gatewayRefreshCounter intentionally triggers recomputation to get fresh shuffled gateways on retry
   }, [config.telemetryEnabled, config.routingStrategy, config.preferredGateway, gatewayRefreshCounter]);
 
   // Only remount WayfinderProvider when routing config actually changes, not on every state change

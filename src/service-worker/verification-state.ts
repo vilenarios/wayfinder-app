@@ -22,6 +22,10 @@ const manifestStates = new Map<string, ManifestVerificationState>();
 // This tracks which identifier's content is currently being served in the iframe
 let activeIdentifier: string | null = null;
 
+// Counter for generating unique verification IDs
+// Used to detect and ignore updates from stale/abandoned verifications
+let verificationCounter = 0;
+
 /**
  * Set the currently active identifier.
  * Used to intercept absolute path requests from the iframe.
@@ -54,11 +58,23 @@ export async function broadcastEvent(event: VerificationEvent): Promise<void> {
 }
 
 /**
- * Start tracking a new manifest verification.
+ * Check if a verification ID is current (not stale from an abandoned verification).
  */
-export function startManifestVerification(identifier: string): ManifestVerificationState {
+function isCurrentVerification(identifier: string, verificationId: number): boolean {
+  const state = manifestStates.get(identifier);
+  return state !== null && state !== undefined && state.verificationId === verificationId;
+}
+
+/**
+ * Start tracking a new manifest verification.
+ * Returns the verification ID which must be passed to all subsequent state updates.
+ */
+export function startManifestVerification(identifier: string): number {
+  const verificationId = ++verificationCounter;
+
   const state: ManifestVerificationState = {
     identifier,
+    verificationId,
     manifestTxId: '',
     status: 'resolving',
     manifest: null,
@@ -78,36 +94,44 @@ export function startManifestVerification(identifier: string): ManifestVerificat
     identifier,
   });
 
-  logger.debug(TAG, `Started: ${identifier}`);
-  return state;
+  logger.debug(TAG, `Started: ${identifier} (id=${verificationId})`);
+  return verificationId;
 }
 
 /**
  * Update state after ArNS resolution.
+ * @param verificationId - Must match the ID returned by startManifestVerification
  */
-export function setResolvedTxId(identifier: string, manifestTxId: string, gateway?: string): void {
-  const state = manifestStates.get(identifier);
-  if (state) {
-    state.manifestTxId = manifestTxId;
-    state.status = 'fetching-manifest';
-    if (gateway) {
-      state.routingGateway = gateway;
-    }
-    logger.debug(TAG, `Resolved "${identifier}" → ${manifestTxId.slice(0, 8)}...`);
+export function setResolvedTxId(identifier: string, verificationId: number, manifestTxId: string, gateway?: string): void {
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale setResolvedTxId for ${identifier}`);
+    return;
   }
+  const state = manifestStates.get(identifier)!;
+  state.manifestTxId = manifestTxId;
+  state.status = 'fetching-manifest';
+  if (gateway) {
+    state.routingGateway = gateway;
+  }
+  logger.debug(TAG, `Resolved "${identifier}" → ${manifestTxId.slice(0, 8)}...`);
 }
 
 /**
  * Update state after manifest is parsed.
+ * @param verificationId - Must match the ID returned by startManifestVerification
  * @param isSingleFile - True if this is a single file (not a real manifest)
  */
 export function setManifestLoaded(
   identifier: string,
+  verificationId: number,
   manifest: ArweaveManifest,
   isSingleFile: boolean = false
 ): void {
-  const state = manifestStates.get(identifier);
-  if (!state) return;
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale setManifestLoaded for ${identifier}`);
+    return;
+  }
+  const state = manifestStates.get(identifier)!;
 
   state.manifest = manifest;
   state.status = 'verifying';
@@ -145,10 +169,14 @@ export function setManifestLoaded(
 
 /**
  * Record successful verification of a resource.
+ * @param verificationId - Must match the ID returned by startManifestVerification
  */
-export function recordResourceVerified(identifier: string, _txId: string, path: string): void {
-  const state = manifestStates.get(identifier);
-  if (!state) return;
+export function recordResourceVerified(identifier: string, verificationId: number, _txId: string, path: string): void {
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale recordResourceVerified for ${identifier}`);
+    return;
+  }
+  const state = manifestStates.get(identifier)!;
 
   state.verifiedResources++;
 
@@ -164,16 +192,20 @@ export function recordResourceVerified(identifier: string, _txId: string, path: 
 
   // Check if all done
   if (state.verifiedResources + state.failedResources.length >= state.totalResources) {
-    completeVerification(identifier);
+    completeVerificationInternal(identifier, verificationId);
   }
 }
 
 /**
  * Record failed verification of a resource.
+ * @param verificationId - Must match the ID returned by startManifestVerification
  */
-export function recordResourceFailed(identifier: string, txId: string, path: string, error: string): void {
-  const state = manifestStates.get(identifier);
-  if (!state) return;
+export function recordResourceFailed(identifier: string, verificationId: number, txId: string, path: string, error: string): void {
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale recordResourceFailed for ${identifier}`);
+    return;
+  }
+  const state = manifestStates.get(identifier)!;
 
   state.failedResources.push(txId);
 
@@ -190,18 +222,20 @@ export function recordResourceFailed(identifier: string, txId: string, path: str
 
   // Check if all done (even with failures)
   if (state.verifiedResources + state.failedResources.length >= state.totalResources) {
-    completeVerification(identifier);
+    completeVerificationInternal(identifier, verificationId);
   }
 }
 
 /**
- * Mark verification as complete.
- * Status is 'complete' if all succeeded, 'partial' if some failed but some succeeded.
- * Exported for empty manifest handling.
+ * Internal function to mark verification as complete.
+ * Called automatically when all resources are processed.
  */
-export function completeVerification(identifier: string): void {
-  const state = manifestStates.get(identifier);
-  if (!state) return;
+function completeVerificationInternal(identifier: string, verificationId: number): void {
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale completeVerification for ${identifier}`);
+    return;
+  }
+  const state = manifestStates.get(identifier)!;
 
   // Determine final status:
   // - 'complete': all resources verified successfully
@@ -238,15 +272,27 @@ export function completeVerification(identifier: string): void {
 }
 
 /**
- * Mark verification as failed with error.
+ * Mark verification as complete.
+ * Status is 'complete' if all succeeded, 'partial' if some failed but some succeeded.
+ * @param verificationId - Must match the ID returned by startManifestVerification
  */
-export function failVerification(identifier: string, error: string): void {
-  const state = manifestStates.get(identifier);
-  if (state) {
-    state.status = 'failed';
-    state.error = error;
-    state.completedAt = Date.now();
+export function completeVerification(identifier: string, verificationId: number): void {
+  completeVerificationInternal(identifier, verificationId);
+}
+
+/**
+ * Mark verification as failed with error.
+ * @param verificationId - Must match the ID returned by startManifestVerification
+ */
+export function failVerification(identifier: string, verificationId: number, error: string): void {
+  if (!isCurrentVerification(identifier, verificationId)) {
+    logger.debug(TAG, `Ignoring stale failVerification for ${identifier}`);
+    return;
   }
+  const state = manifestStates.get(identifier)!;
+  state.status = 'failed';
+  state.error = error;
+  state.completedAt = Date.now();
 
   logger.error(TAG, `Failed: ${identifier} - ${error}`);
 

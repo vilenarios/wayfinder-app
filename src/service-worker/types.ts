@@ -18,6 +18,7 @@ export interface ManifestPath {
  */
 export interface ManifestVerificationState {
   identifier: string;           // Original ArNS name or txId requested
+  verificationId: number;       // Unique ID to detect stale updates from abandoned verifications
   manifestTxId: string;         // Resolved manifest transaction ID
   status: 'resolving' | 'fetching-manifest' | 'verifying' | 'complete' | 'partial' | 'failed';
   manifest: ArweaveManifest | null;

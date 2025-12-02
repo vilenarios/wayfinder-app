@@ -335,9 +335,12 @@ async function fetchAndVerifyRawContent(
  * If the primary gateway fails, retries with fallback gateways.
  * Uses direct fetch + hash verification for fallbacks to avoid race conditions
  * with the global selectedGateway state during concurrent verification.
+ *
+ * @param verificationId - Must match the ID returned by startManifestVerification
  */
 async function verifyAndCacheResource(
   identifier: string,
+  verificationId: number,
   txId: string,
   path: string,
   fallbackGateways: string[],
@@ -348,7 +351,7 @@ async function verifyAndCacheResource(
   }
 
   if (verifiedCache.has(txId)) {
-    recordResourceVerified(identifier, txId, path);
+    recordResourceVerified(identifier, verificationId, txId, path);
     return;
   }
 
@@ -367,7 +370,7 @@ async function verifyAndCacheResource(
     });
 
     verifiedCache.set(txId, { contentType, data, headers });
-    recordResourceVerified(identifier, txId, path);
+    recordResourceVerified(identifier, verificationId, txId, path);
     return;
 
   } catch (err) {
@@ -408,7 +411,7 @@ async function verifyAndCacheResource(
       });
 
       verifiedCache.set(txId, { contentType, data, headers });
-      recordResourceVerified(identifier, txId, path);
+      recordResourceVerified(identifier, verificationId, txId, path);
 
       logger.info(TAG, `Fallback succeeded: ${path} via ${new URL(gatewayBase).hostname}`);
       return;
@@ -423,7 +426,7 @@ async function verifyAndCacheResource(
   // All attempts failed
   const errorMsg = lastError?.message || 'All gateways failed';
   logger.warn(TAG, `Failed: ${path} - ${errorMsg}`);
-  recordResourceFailed(identifier, txId, path, errorMsg);
+  recordResourceFailed(identifier, verificationId, txId, path, errorMsg);
   throw lastError || new Error(errorMsg);
 }
 
@@ -437,6 +440,7 @@ async function verifyAndCacheResource(
  */
 async function verifyAllResources(
   identifier: string,
+  verificationId: number,
   manifest: ArweaveManifest,
   primaryGateway: string,
   fallbackGateways: string[],
@@ -474,7 +478,7 @@ async function verifyAllResources(
 
     // Primary gateway is already set globally via setSelectedGateway before this function is called.
     // Fallbacks use direct fetch to avoid race conditions with concurrent verification.
-    const promise = verifyAndCacheResource(identifier, txId, path, filteredFallbacks, trustedGateways)
+    const promise = verifyAndCacheResource(identifier, verificationId, txId, path, filteredFallbacks, trustedGateways)
       .catch(() => { /* Errors already logged */ });
 
     activePromises.add(promise);
@@ -494,18 +498,19 @@ export async function verifyIdentifier(
   identifier: string,
   config: SwWayfinderConfig
 ): Promise<void> {
-  startManifestVerification(identifier);
+  // Get unique verification ID to detect stale updates if user re-searches
+  const verificationId = startManifestVerification(identifier);
 
   try {
     let txId: string;
 
     if (isTxId(identifier)) {
       txId = identifier;
-      setResolvedTxId(identifier, txId);
+      setResolvedTxId(identifier, verificationId, txId);
     } else {
       const resolved = await resolveArnsToTxId(identifier, config.trustedGateways);
       txId = resolved.txId;
-      setResolvedTxId(identifier, txId, resolved.gateway);
+      setResolvedTxId(identifier, verificationId, txId, resolved.gateway);
     }
 
     const routingGateways = config.routingGateways && config.routingGateways.length > 0
@@ -583,17 +588,18 @@ export async function verifyIdentifier(
         paths: { 'index': { id: txId } },
       };
 
-      setManifestLoaded(identifier, singleFileManifest, true /* isSingleFile */);
+      setManifestLoaded(identifier, verificationId, singleFileManifest, true /* isSingleFile */);
       // Record as verified - this triggers completeVerification automatically
       // since verifiedResources (1) >= totalResources (1)
-      recordResourceVerified(identifier, txId, 'index');
+      recordResourceVerified(identifier, verificationId, txId, 'index');
       return;
     }
 
     // Manifest case - manifest itself is now verified, proceed to verify resources
-    setManifestLoaded(identifier, manifest!);
+    setManifestLoaded(identifier, verificationId, manifest!);
     const wasEmpty = await verifyAllResources(
       identifier,
+      verificationId,
       manifest!,
       workingGateway,
       fallbackGateways, // Pass all gateways as potential fallbacks
@@ -602,12 +608,12 @@ export async function verifyIdentifier(
 
     // For empty manifests, manually trigger completion since no resources will do it
     if (wasEmpty) {
-      completeVerification(identifier);
+      completeVerification(identifier, verificationId);
     }
 
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    failVerification(identifier, errorMsg);
+    failVerification(identifier, verificationId, errorMsg);
     throw error;
   } finally {
     setSelectedGateway(null);

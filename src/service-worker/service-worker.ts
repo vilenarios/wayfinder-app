@@ -91,6 +91,8 @@ self.addEventListener('message', (event) => {
         verifiedCache.clearForManifest(txIds);
       }
       clearManifestState(identifier);
+      // Clear pending verification so re-search starts fresh with new gateway
+      pendingVerifications.delete(identifier);
       // Clear active identifier if it matches
       if (getActiveIdentifier() === identifier) {
         setActiveIdentifier(null);
