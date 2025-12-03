@@ -183,8 +183,11 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               </label>
 
-              {/* Verification Method (only shown when verification is enabled) */}
-              {localConfig.verificationEnabled && (
+              {/* Verification Method - HIDDEN: Signature verification doesn't work reliably for data items (ANS-104).
+                  The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions.
+                  Most Arweave content is bundled as data items, so signature verification fails.
+                  Keeping code for when SDK is fixed. */}
+              {false && localConfig.verificationEnabled && (
                 <div className="mt-3 pt-3 border-t border-stroke-low">
                   <div className="text-sm font-medium text-text-high mb-2">
                     Verification Method
@@ -228,7 +231,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                       <div className="flex-1">
                         <div className="font-medium text-text-high">
                           Signature Verification
-                          <span className="ml-2 px-1.5 py-0.5 text-xs bg-semantic-success bg-opacity-20 text-semantic-success rounded">
+                          <span className="ml-2 px-1.5 py-0.5 text-xs bg-semantic-success bg-opacity-20 text-black rounded">
                             Most Secure
                           </span>
                         </div>

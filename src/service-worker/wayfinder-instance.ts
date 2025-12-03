@@ -1,22 +1,27 @@
 /**
  * Wayfinder client instance for service worker.
  *
- * Creates and manages the Wayfinder client for routing/fetching only.
- * Verification is handled separately by manifest-verifier.ts using our own
- * hash verification logic (verifyHashAgainstTrustedGateway) for quieter logs
- * and more control.
+ * Creates and manages the Wayfinder client for routing and verification.
+ * Supports both HashVerificationStrategy and SignatureVerificationStrategy
+ * based on user configuration.
  */
 
-import { createWayfinderClient, createRoutingStrategy, StaticRoutingStrategy } from '@ar.io/wayfinder-core';
-import type { Wayfinder } from '@ar.io/wayfinder-core';
+import {
+  createWayfinderClient,
+  createRoutingStrategy,
+  StaticRoutingStrategy,
+  HashVerificationStrategy,
+  SignatureVerificationStrategy,
+} from '@ar.io/wayfinder-core';
+import type { Wayfinder, VerificationStrategy } from '@ar.io/wayfinder-core';
 import type { SwWayfinderConfig } from './types';
 import { logger } from './logger';
-// Note: Verification counting is handled in manifest-verifier.ts, not via Wayfinder callbacks
 
 const TAG = 'Wayfinder';
 
 let wayfinderInstance: Wayfinder | null = null;
 let currentConfig: SwWayfinderConfig | null = null;
+let verificationStrategy: VerificationStrategy | null = null;
 
 // Selected gateway for current manifest verification
 // When set, all resource fetches use this gateway instead of random selection
@@ -138,14 +143,37 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
     });
   }
 
-  // NOTE: We intentionally disable wayfinder-core's built-in verification.
-  // Our manifest-verifier.ts handles verification using verifyHashAgainstTrustedGateway()
-  // which is quieter and gives us more control. Wayfinder is only used for routing/fetching.
+  // Create verification strategy based on config
+  const trustedGatewayUrls = config.trustedGateways.map(url => new URL(url));
+
+  if (verificationMethod === 'signature') {
+    // Signature verification - cryptographically verifies data item signatures
+    verificationStrategy = new SignatureVerificationStrategy({
+      trustedGateways: trustedGatewayUrls,
+      maxConcurrency: 3,
+      logger: quietWayfinderLogger,
+    });
+    logger.debug(TAG, `Verification strategy: SignatureVerificationStrategy with ${trustedGatewayUrls.length} trusted gateways`);
+  } else {
+    // Hash verification (default) - verifies content hash against trusted gateways
+    verificationStrategy = new HashVerificationStrategy({
+      trustedGateways: trustedGatewayUrls,
+      maxConcurrency: 3,
+      logger: quietWayfinderLogger,
+    });
+    logger.debug(TAG, `Verification strategy: HashVerificationStrategy with ${trustedGatewayUrls.length} trusted gateways`);
+  }
+
+  // Create Wayfinder client with SDK verification enabled
+  // Note: We still handle our own verification orchestration in manifest-verifier.ts
+  // but now delegate the actual hash verification to the SDK's strategy
   wayfinderInstance = createWayfinderClient({
     logger: quietWayfinderLogger,
     routingSettings: {
       strategy: routingStrategy,
     },
+    // Verification is handled by manifest-verifier.ts using getVerificationStrategy()
+    // We disable it here to avoid double-verification when using wayfinder.request()
     verificationSettings: { enabled: false },
     telemetrySettings: {
       enabled: false,
@@ -185,4 +213,17 @@ export function isWayfinderReady(): boolean {
  */
 export function getConfig(): SwWayfinderConfig | null {
   return currentConfig;
+}
+
+/**
+ * Get the verification strategy instance.
+ * Returns either HashVerificationStrategy or SignatureVerificationStrategy
+ * based on config.verificationMethod.
+ * Throws if not initialized.
+ */
+export function getVerificationStrategy(): VerificationStrategy {
+  if (!verificationStrategy) {
+    throw new Error('Verification strategy not initialized');
+  }
+  return verificationStrategy;
 }

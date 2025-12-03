@@ -28,9 +28,10 @@ import {
   getManifestState,
   broadcastEvent,
 } from './verification-state';
-import { getWayfinder, isWayfinderReady, setSelectedGateway } from './wayfinder-instance';
+import { getWayfinder, isWayfinderReady, setSelectedGateway, getVerificationStrategy } from './wayfinder-instance';
 import { swGatewayHealth } from './gateway-health';
 import { logger } from './logger';
+import type { VerificationStrategy } from '@ar.io/wayfinder-core';
 
 const TAG = 'Verifier';
 
@@ -190,7 +191,25 @@ async function selectWorkingGateway(
 }
 
 /**
+ * Convert an ArrayBuffer to a ReadableStream for SDK compatibility.
+ * The SDK's verifyData expects a DataStream (ReadableStream or AsyncIterable).
+ */
+function arrayBufferToStream(data: ArrayBuffer): ReadableStream<Uint8Array> {
+  const uint8Array = new Uint8Array(data);
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(uint8Array);
+      controller.close();
+    },
+  });
+}
+
+/**
  * Compute SHA-256 hash of data and return as base64url string.
+ * Uses Web Crypto API which is available in service workers.
+ *
+ * NOTE: This is only used for manifest verification where we need /raw/ endpoint.
+ * For regular resources, we use the SDK's HashVerificationStrategy.
  */
 async function computeHash(data: ArrayBuffer): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -204,74 +223,142 @@ async function computeHash(data: ArrayBuffer): Promise<string> {
 }
 
 /**
- * Verify a computed hash against trusted gateways.
- * Fetches the hash from ONE trusted gateway (trying each until one succeeds).
- * This is more efficient than fetching from all gateways.
+ * Fetch the trusted hash for a txId from trusted gateways using /raw/ endpoint.
  *
- * Note: We only need ONE trusted gateway to agree because:
- * 1. The txId itself is content-addressed (hash of the data)
- * 2. If the routing gateway served wrong content, the hash won't match
- * 3. We're verifying our computed hash against a trusted source
+ * This is ONLY used for manifest verification because:
+ * - The SDK's getDigest uses sandbox URLs which resolve manifests to index.html
+ * - We need the hash of the raw manifest JSON, not the resolved content
+ *
+ * For regular resources, use verifyResourceWithSdk() instead.
  */
-async function verifyHashAgainstTrustedGateway(
+async function fetchTrustedHashForManifest(
   txId: string,
-  computedHash: string,
-  trustedGateways: string[]
-): Promise<void> {
-  let lastError: Error | null = null;
+  trustedGateways: URL[]
+): Promise<string> {
+  const errors: string[] = [];
 
   for (const gateway of trustedGateways) {
-    const gatewayBase = gateway.replace(/\/+$/, '');
+    const gatewayBase = gateway.toString().replace(/\/+$/, '');
 
     try {
-      // First try HEAD request to get hash from header (most efficient)
-      const headResponse = await fetch(`${gatewayBase}/raw/${txId}`, {
+      // Use /raw/ to get the hash of the actual raw content
+      const rawUrl = `${gatewayBase}/raw/${txId}`;
+
+      // Try HEAD request first to get hash from header
+      const headResponse = await fetch(rawUrl, {
         method: 'HEAD',
         signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
       });
+
       if (!headResponse.ok) {
         throw new Error(`HTTP ${headResponse.status}`);
       }
 
-      // Try to get hash from header
-      const hashHeader = headResponse.headers.get('x-ar-io-data-hash') ||
+      // Check for hash header (x-ar-io-digest is the canonical one)
+      const hashHeader = headResponse.headers.get('x-ar-io-digest') ||
+                         headResponse.headers.get('x-ar-io-data-hash') ||
                          headResponse.headers.get('x-arweave-data-hash');
 
       if (hashHeader) {
-        if (hashHeader === computedHash) {
-          logger.debug(TAG, `Hash verified via header from ${new URL(gatewayBase).hostname}`);
-          return; // Success!
-        } else {
-          throw new Error(`Hash mismatch: computed=${computedHash.slice(0, 12)}..., trusted=${hashHeader.slice(0, 12)}...`);
-        }
+        logger.debug(TAG, `Got trusted hash from ${gateway.hostname}: ${hashHeader.slice(0, 12)}...`);
+        return hashHeader;
       }
 
-      // No hash header - need to fetch and hash the content
-      const fullResponse = await fetch(`${gatewayBase}/raw/${txId}`, {
+      // No header - need to fetch and compute hash
+      const fullResponse = await fetch(rawUrl, {
         signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
       });
+
       if (!fullResponse.ok) {
         throw new Error(`HTTP ${fullResponse.status}`);
       }
 
       const data = await fullResponse.arrayBuffer();
-      const trustedHash = await computeHash(data);
-
-      if (trustedHash === computedHash) {
-        logger.debug(TAG, `Hash verified via content from ${new URL(gatewayBase).hostname}`);
-        return; // Success!
-      } else {
-        throw new Error(`Hash mismatch: computed=${computedHash.slice(0, 12)}..., trusted=${trustedHash.slice(0, 12)}...`);
-      }
+      const hash = await computeHash(data);
+      logger.debug(TAG, `Computed trusted hash from ${gateway.hostname}: ${hash.slice(0, 12)}...`);
+      return hash;
 
     } catch (error) {
-      logger.debug(TAG, `Trusted gateway ${new URL(gatewayBase).hostname} failed: ${error instanceof Error ? error.message : error}`);
-      lastError = error instanceof Error ? error : new Error(String(error));
-      // Continue to next gateway
+      const errMsg = error instanceof Error ? error.message : String(error);
+      errors.push(`${gateway.hostname}: ${errMsg}`);
+      logger.debug(TAG, `Trusted gateway ${gateway.hostname} failed: ${errMsg}`);
     }
   }
 
-  throw new Error(`All trusted gateways failed to verify hash. Last error: ${lastError?.message}`);
+  throw new Error(`All trusted gateways failed to provide hash: ${errors.join(', ')}`);
+}
+
+/**
+ * Verify MANIFEST content.
+ *
+ * For HASH verification:
+ *   Manifests require special handling because the SDK's sandbox URLs resolve
+ *   manifests to their index.html content, giving a different hash than the
+ *   raw manifest JSON we fetch via /raw/{txId}. So we use custom /raw/ verification.
+ *
+ * For SIGNATURE verification:
+ *   We also use custom /raw/ verification for manifests to be safe.
+ *   While signature verification theoretically works on the data item itself,
+ *   the SDK still uses sandbox URLs to fetch data item attributes, and we want
+ *   to ensure we're verifying the manifest txId, not the resolved content.
+ *
+ * NOTE: For individual resources, we use the SDK directly since they don't
+ * have the manifest resolution issue.
+ *
+ * @param txId - The manifest transaction ID
+ * @param data - The manifest data to verify (as ArrayBuffer)
+ * @param strategy - The verification strategy
+ */
+async function verifyManifestData(
+  txId: string,
+  data: ArrayBuffer,
+  strategy: VerificationStrategy
+): Promise<void> {
+  // For manifests, always use custom /raw/ hash verification
+  // This is because the SDK's sandbox URLs resolve manifests to their index.html,
+  // which could cause issues even for signature verification since it fetches
+  // data item attributes from sandbox URLs.
+  //
+  // For individual resources, we use the SDK directly (in verifyResourceWithSdk).
+  const computedHash = await computeHash(data);
+  logger.debug(TAG, `Computed manifest hash: ${computedHash.slice(0, 12)}...`);
+
+  const trustedHash = await fetchTrustedHashForManifest(txId, strategy.trustedGateways);
+
+  if (computedHash !== trustedHash) {
+    throw new Error(`Manifest hash mismatch: computed=${computedHash.slice(0, 12)}..., trusted=${trustedHash.slice(0, 12)}...`);
+  }
+
+  logger.debug(TAG, `Manifest verified: ${txId.slice(0, 8)}...`);
+}
+
+/**
+ * Verify RESOURCE content using the SDK's verification strategy.
+ *
+ * Works with both HashVerificationStrategy and SignatureVerificationStrategy.
+ * For individual resources (JS, CSS, images, etc.), the txId points directly
+ * to the file content, so both strategies work correctly via the SDK.
+ *
+ * @param txId - The resource transaction ID
+ * @param data - The resource data to verify (as ArrayBuffer)
+ * @param strategy - The SDK verification strategy (hash or signature)
+ */
+async function verifyResourceWithSdk(
+  txId: string,
+  data: ArrayBuffer,
+  strategy: VerificationStrategy
+): Promise<void> {
+  // Convert ArrayBuffer to ReadableStream for SDK compatibility
+  const dataStream = arrayBufferToStream(data);
+
+  // Use SDK's verification strategy (hash or signature based on config)
+  await strategy.verifyData({
+    data: dataStream,
+    txId,
+    headers: {},
+  });
+
+  logger.debug(TAG, `SDK verified resource: ${txId.slice(0, 8)}...`);
 }
 
 /**
@@ -280,13 +367,12 @@ async function verifyHashAgainstTrustedGateway(
  * SECURITY: This fetches RAW content (not resolved through manifest paths)
  * and verifies its hash against trusted gateways before trusting it.
  *
- * For manifests: We need the raw manifest JSON, not the resolved index.html.
- * For single files: The raw content IS the file content.
+ * For manifests: Uses custom /raw/ verification (SDK sandbox URLs resolve to index.html)
+ * For single files: Uses SDK's HashVerificationStrategy
  */
 async function fetchAndVerifyRawContent(
   txId: string,
-  routingGateway: string,
-  trustedGateways: string[]
+  routingGateway: string
 ): Promise<ManifestCheckResult> {
   const gatewayBase = routingGateway.replace(/\/+$/, '');
   const rawUrl = `${gatewayBase}/raw/${txId}`;
@@ -303,15 +389,38 @@ async function fetchAndVerifyRawContent(
 
   const contentType = response.headers.get('content-type') || 'application/octet-stream';
   const rawData = await response.arrayBuffer();
+  const strategy = getVerificationStrategy();
 
-  // Compute hash of fetched content
-  const computedHash = await computeHash(rawData);
-  logger.debug(TAG, `Computed hash: ${computedHash.slice(0, 12)}...`);
+  // Check if it's a manifest first (before verification) to choose the right method
+  let isManifest = false;
+  let manifest: ArweaveManifest | undefined;
 
-  // Verify hash against trusted gateways
-  await verifyHashAgainstTrustedGateway(txId, computedHash, trustedGateways);
+  if (contentType.includes('application/x.arweave-manifest+json')) {
+    isManifest = true;
+    const text = new TextDecoder().decode(rawData);
+    manifest = JSON.parse(text) as ArweaveManifest;
+  } else {
+    // Try parsing as JSON manifest (some may not have correct content-type)
+    try {
+      const text = new TextDecoder().decode(rawData);
+      const parsed = JSON.parse(text);
+      if (parsed.manifest === 'arweave/paths' && parsed.paths) {
+        isManifest = true;
+        manifest = parsed as ArweaveManifest;
+      }
+    } catch {
+      // Not JSON, not a manifest
+    }
+  }
 
-  logger.debug(TAG, `Verified: ${txId.slice(0, 8)}...`);
+  // Use appropriate verification method
+  if (isManifest) {
+    // Manifests need /raw/ verification because SDK sandbox URLs resolve to index.html
+    await verifyManifestData(txId, rawData, strategy);
+  } else {
+    // Single files can use SDK verification
+    await verifyResourceWithSdk(txId, rawData, strategy);
+  }
 
   // Cache the verified content
   const headers: Record<string, string> = {};
@@ -320,28 +429,10 @@ async function fetchAndVerifyRawContent(
   });
   verifiedCache.set(txId, { contentType, data: rawData, headers });
 
-  // Check if it's a manifest by content-type
-  if (contentType.includes('application/x.arweave-manifest+json')) {
-    const text = new TextDecoder().decode(rawData);
-    const manifest = JSON.parse(text) as ArweaveManifest;
-    logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
-    return { isManifest: true, manifest, rawData, contentType };
+  // Return result
+  if (isManifest) {
+    return { isManifest: true, manifest: manifest!, rawData, contentType };
   }
-
-  // Try parsing as JSON manifest (some may not have correct content-type)
-  try {
-    const text = new TextDecoder().decode(rawData);
-    const parsed = JSON.parse(text);
-    if (parsed.manifest === 'arweave/paths' && parsed.paths) {
-      const manifest = parsed as ArweaveManifest;
-      logger.debug(TAG, `Manifest detected: ${Object.keys(manifest.paths).length} paths`);
-      return { isManifest: true, manifest, rawData, contentType };
-    }
-  } catch {
-    // Not JSON, not a manifest
-  }
-
-  logger.debug(TAG, 'Single file mode');
   return { isManifest: false, rawData, contentType };
 }
 
@@ -350,8 +441,7 @@ async function fetchAndVerifyRawContent(
  * Records verification success/failure directly (not via Wayfinder callbacks).
  *
  * If the primary gateway fails, retries with fallback gateways.
- * Uses direct fetch + hash verification for fallbacks to avoid race conditions
- * with the global selectedGateway state during concurrent verification.
+ * Uses SDK's HashVerificationStrategy for verification.
  *
  * @param verificationId - Must match the ID returned by startManifestVerification
  */
@@ -360,8 +450,7 @@ async function verifyAndCacheResource(
   verificationId: number,
   txId: string,
   path: string,
-  fallbackGateways: string[],
-  trustedGateways: string[]
+  fallbackGateways: string[]
 ): Promise<void> {
   if (!isWayfinderReady()) {
     throw new Error('Wayfinder not ready');
@@ -373,6 +462,7 @@ async function verifyAndCacheResource(
   }
 
   const wayfinder = getWayfinder();
+  const strategy = getVerificationStrategy();
   const arUrl = `ar://${txId}`;
 
   // First attempt with the primary (locked) gateway via Wayfinder
@@ -380,6 +470,9 @@ async function verifyAndCacheResource(
     const response = await wayfinder.request(arUrl);
     const data = await response.arrayBuffer();
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+    // Verify using SDK's HashVerificationStrategy
+    await verifyResourceWithSdk(txId, data, strategy);
 
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
@@ -396,7 +489,7 @@ async function verifyAndCacheResource(
     // Continue to fallback attempts
   }
 
-  // Fallback: Fetch directly from other gateways and verify hash ourselves
+  // Fallback: Fetch directly from other gateways and verify with SDK
   // This avoids race conditions with the global selectedGateway during concurrent verification
   let lastError: Error | null = null;
 
@@ -417,9 +510,8 @@ async function verifyAndCacheResource(
       const data = await response.arrayBuffer();
       const contentType = response.headers.get('content-type') || 'application/octet-stream';
 
-      // Verify hash against trusted gateways (same as fetchAndVerifyRawContent does)
-      const computedHash = await computeHash(data);
-      await verifyHashAgainstTrustedGateway(txId, computedHash, trustedGateways);
+      // Verify using SDK's HashVerificationStrategy
+      await verifyResourceWithSdk(txId, data, strategy);
 
       // Verification passed - cache it
       const headers: Record<string, string> = {};
@@ -451,17 +543,17 @@ async function verifyAndCacheResource(
  * Verify all resources in a manifest with concurrency control.
  * Returns true if manifest was empty (caller should trigger completion).
  *
+ * Uses SDK's HashVerificationStrategy for verification (via getVerificationStrategy()).
+ *
  * @param primaryGateway - The primary gateway to use for all resources (already set globally)
  * @param fallbackGateways - Backup gateways to try if primary fails for a resource
- * @param trustedGateways - Trusted gateways for hash verification during fallback
  */
 async function verifyAllResources(
   identifier: string,
   verificationId: number,
   manifest: ArweaveManifest,
   primaryGateway: string,
-  fallbackGateways: string[],
-  trustedGateways: string[]
+  fallbackGateways: string[]
 ): Promise<boolean> {
   const entries = Object.entries(manifest.paths);
 
@@ -495,7 +587,7 @@ async function verifyAllResources(
 
     // Primary gateway is already set globally via setSelectedGateway before this function is called.
     // Fallbacks use direct fetch to avoid race conditions with concurrent verification.
-    const promise = verifyAndCacheResource(identifier, verificationId, txId, path, filteredFallbacks, trustedGateways)
+    const promise = verifyAndCacheResource(identifier, verificationId, txId, path, filteredFallbacks)
       .catch(() => { /* Errors already logged */ });
 
     activePromises.add(promise);
@@ -586,12 +678,11 @@ export async function verifyIdentifier(
 
     // Step 3: Fetch AND VERIFY the raw manifest/content
     // SECURITY: This fetches raw content (not resolved through manifest paths)
-    // and verifies its hash against trusted gateways before trusting it.
+    // and verifies its hash using the SDK's HashVerificationStrategy.
     // This prevents a malicious routing gateway from serving a forged manifest.
     const { isManifest, manifest } = await fetchAndVerifyRawContent(
       txId,
-      workingGateway,
-      config.trustedGateways
+      workingGateway
     );
 
     if (!isManifest) {
@@ -619,8 +710,7 @@ export async function verifyIdentifier(
       verificationId,
       manifest!,
       workingGateway,
-      fallbackGateways, // Pass all gateways as potential fallbacks
-      config.trustedGateways // Pass trusted gateways for hash verification during fallback
+      fallbackGateways // Pass all gateways as potential fallbacks
     );
 
     // For empty manifests, manually trigger completion since no resources will do it
