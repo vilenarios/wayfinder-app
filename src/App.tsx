@@ -20,6 +20,7 @@ import { VerificationBlockedModal } from './components/VerificationBlockedModal'
 import { VerificationLoadingScreen } from './components/VerificationLoadingScreen';
 import { swMessenger } from './utils/serviceWorkerMessaging';
 import { getTrustedGateways, getRoutingGateways } from './utils/trustedGateways';
+import { gatewayHealth } from './utils/gatewayHealth';
 import type { VerificationEvent } from './service-worker/types';
 
 // Separate component that only handles Wayfinder configuration
@@ -93,20 +94,31 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
       },
     };
 
-    // Wrap with a limiting provider to randomly select 20 gateways
+    // Wrap with a limiting provider to randomly select 20 healthy gateways
     const limitedProvider = {
       async getGateways() {
         const allGateways = await resilientProvider.getGateways();
 
+        // Filter out unhealthy gateways
+        const gatewayUrls = allGateways.map(g => g.toString());
+        let healthyUrls = gatewayHealth.filterHealthy(gatewayUrls);
+
+        // If all gateways are unhealthy, clear the cache and use all gateways
+        if (healthyUrls.length === 0) {
+          console.log('[WayfinderWrapper] All gateways marked unhealthy, clearing cache');
+          gatewayHealth.clear();
+          healthyUrls = gatewayUrls;
+        }
+
         // Shuffle the gateways array using Fisher-Yates algorithm
-        const shuffled = [...allGateways];
+        const shuffled = [...healthyUrls];
         for (let i = shuffled.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
 
         // Return random 20 gateways (or all if fewer than 20)
-        return shuffled.slice(0, Math.min(20, shuffled.length));
+        return shuffled.slice(0, Math.min(20, shuffled.length)).map(url => new URL(url));
       },
     };
 

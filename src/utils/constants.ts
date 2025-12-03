@@ -2,6 +2,15 @@ import type { WayfinderConfig } from '../types';
 
 export const STORAGE_KEY = 'wayfinder-app-config';
 
+// Gateway health check settings
+export const GATEWAY_HEALTH_CHECK_TIMEOUT_MS = 5000; // 5 seconds
+export const GATEWAY_BLACKLIST_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+export const MAX_GATEWAY_AUTO_RETRIES = 3;
+
+// Loading screen thresholds
+export const SLOW_THRESHOLD_MS = 10000; // 10s - show warning
+export const TIMEOUT_THRESHOLD_MS = 15000; // 15s - auto-retry/show button
+
 export const DEFAULT_CONFIG: WayfinderConfig = {
   routingStrategy: 'random',
   telemetryEnabled: false,

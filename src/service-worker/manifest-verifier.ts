@@ -29,6 +29,7 @@ import {
   broadcastEvent,
 } from './verification-state';
 import { getWayfinder, isWayfinderReady, setSelectedGateway } from './wayfinder-instance';
+import { swGatewayHealth } from './gateway-health';
 import { logger } from './logger';
 
 const TAG = 'Verifier';
@@ -133,6 +134,8 @@ export async function resolveArnsToTxId(
  * Find a working gateway by trying each one until one responds.
  * This is a lightweight check (HEAD request) to find a responsive gateway
  * before committing to verified fetches.
+ *
+ * Uses the gateway health cache to skip known unhealthy gateways.
  */
 async function selectWorkingGateway(
   txId: string,
@@ -142,9 +145,19 @@ async function selectWorkingGateway(
     throw new Error('No gateways available');
   }
 
+  // Filter out known unhealthy gateways first
+  let candidates = swGatewayHealth.filterHealthy(gateways);
+
+  // If all are marked unhealthy, clear cache and use all gateways
+  if (candidates.length === 0) {
+    logger.debug(TAG, 'All gateways marked unhealthy, clearing cache');
+    swGatewayHealth.clear();
+    candidates = gateways;
+  }
+
   let lastError: Error | null = null;
 
-  for (const gateway of gateways) {
+  for (const gateway of candidates) {
     const gatewayBase = gateway.replace(/\/+$/, '');
     const rawUrl = `${gatewayBase}/raw/${txId}`;
 
@@ -165,6 +178,10 @@ async function selectWorkingGateway(
       const errMsg = error instanceof Error ? error.message : String(error);
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       logger.debug(TAG, `Gateway ${isTimeout ? 'timeout' : 'failed'}: ${new URL(gatewayBase).hostname} - ${errMsg}`);
+
+      // Mark this gateway as unhealthy so we don't try it again soon
+      swGatewayHealth.markUnhealthy(gatewayBase, undefined, errMsg);
+
       lastError = error instanceof Error ? error : new Error(String(error));
     }
   }
