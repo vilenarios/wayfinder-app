@@ -266,14 +266,14 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
         }
 
         // Get trusted gateways (top-staked, for hash verification)
-        const trustedGateways = await getTrustedGateways();
+        const trustedGateways = await getTrustedGateways(config.trustedGatewayCount);
 
         // Get routing gateways (broader pool, for content fetching)
         const routingGateways = await getRoutingGateways();
 
         // Initialize Wayfinder in service worker
         await swMessenger.initializeWayfinder({
-          trustedGateways: trustedGateways.map(u => u.toString()),
+          trustedGateways: trustedGateways.map(gw => gw.url),
           routingGateways: routingGateways.map(u => u.toString()),
           routingStrategy: config.routingStrategy,
           preferredGateway: config.preferredGateway,
@@ -292,7 +292,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     }
 
     initServiceWorker();
-  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway, config.strictVerification, config.verificationConcurrency, config.verificationMethod]);
+  }, [config.verificationEnabled, config.routingStrategy, config.preferredGateway, config.strictVerification, config.verificationConcurrency, config.verificationMethod, config.trustedGatewayCount]);
 
   // Listen for service worker messages (routing gateway, verification events)
   useEffect(() => {

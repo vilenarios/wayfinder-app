@@ -18,6 +18,7 @@ export const DEFAULT_CONFIG: WayfinderConfig = {
   strictVerification: false, // When true, blocks content if verification fails
   verificationConcurrency: 10, // Parallel resource verifications (1-20)
   verificationMethod: 'hash', // 'hash' (fast) or 'signature' (cryptographic)
+  trustedGatewayCount: 3, // Number of trusted gateways for verification (1-10)
 };
 
 export const ROUTING_STRATEGY_OPTIONS = [

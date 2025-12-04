@@ -13,6 +13,14 @@ export interface WayfinderConfig {
   verificationConcurrency: number;
   /** Verification method: 'hash' (fast) or 'signature' (cryptographic, most secure) */
   verificationMethod: VerificationMethod;
+  /** Number of trusted gateways to use for verification (1-10, default 3) */
+  trustedGatewayCount: number;
+}
+
+/** Gateway info with stake for display purposes */
+export interface GatewayWithStake {
+  url: string;
+  totalStake: number;
 }
 
 export interface WayfinderConfigContextValue {

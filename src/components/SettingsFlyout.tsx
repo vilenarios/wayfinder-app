@@ -1,13 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 import { ROUTING_STRATEGY_OPTIONS } from '../utils/constants';
-import { getTrustedGateways } from '../utils/trustedGateways';
-import type { WayfinderConfig, VerificationMethod } from '../types';
+import { getTopStakedGateways } from '../utils/trustedGateways';
+import type { WayfinderConfig, VerificationMethod, GatewayWithStake } from '../types';
 import packageJson from '../../package.json';
 
 // Feature flag: Signature verification is hidden until SDK fixes ANS-104 data item support
 // The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions
 const SHOW_VERIFICATION_METHOD_SELECTOR = false;
+
+/** Format stake amount for display (e.g., 9200000 -> "9.2M IO") */
+function formatStake(stake: number): string {
+  if (stake >= 1_000_000) {
+    return `${(stake / 1_000_000).toFixed(1)}M IO`;
+  } else if (stake >= 1_000) {
+    return `${(stake / 1_000).toFixed(0)}K IO`;
+  }
+  return `${stake} IO`;
+}
 
 interface SettingsFlyoutProps {
   isOpen: boolean;
@@ -17,7 +27,7 @@ interface SettingsFlyoutProps {
 export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
   const { config, updateConfig } = useWayfinderConfig();
   const [localConfig, setLocalConfig] = useState<WayfinderConfig>(config);
-  const [verificationGateways, setVerificationGateways] = useState<string[]>([]);
+  const [topGateways, setTopGateways] = useState<GatewayWithStake[]>([]);
   const [loadingGateways, setLoadingGateways] = useState(false);
 
   useEffect(() => {
@@ -26,18 +36,18 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
     setLocalConfig(config);
   }, [config, isOpen]);
 
-  // Fetch verification gateways when settings panel opens and verification is enabled
+  // Fetch top staked gateways when settings panel opens and verification is enabled
   useEffect(() => {
     if (isOpen && (config.verificationEnabled || localConfig.verificationEnabled)) {
       /* eslint-disable react-hooks/set-state-in-effect */
       setLoadingGateways(true);
-      getTrustedGateways()
+      getTopStakedGateways()
         .then(gateways => {
-          setVerificationGateways(gateways.map(u => u.toString()));
+          setTopGateways(gateways);
         })
         .catch(err => {
           console.error('Failed to fetch verification gateways:', err);
-          setVerificationGateways([]);
+          setTopGateways([]);
         })
         .finally(() => {
           setLoadingGateways(false);
@@ -307,31 +317,68 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               )}
 
+              {/* Trusted Gateway Count Slider */}
+              {localConfig.verificationEnabled && (
+                <div className="mt-3 pt-3 border-t border-stroke-low">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-sm font-medium text-text-high">
+                      Trusted Gateways
+                    </label>
+                    <span className="text-sm font-mono text-accent-teal-primary">
+                      {localConfig.trustedGatewayCount}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={localConfig.trustedGatewayCount}
+                    onChange={(e) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        trustedGatewayCount: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className="w-full h-2 bg-container-L3 rounded-lg appearance-none cursor-pointer accent-accent-teal-primary"
+                  />
+                  <div className="flex justify-between text-xs text-text-low mt-1">
+                    <span>1 (Faster)</span>
+                    <span>10 (More Secure)</span>
+                  </div>
+                  <div className="text-xs text-text-low mt-2">
+                    More gateways = stronger verification consensus, but slower.
+                  </div>
+                </div>
+              )}
+
               {/* Show verification gateways when enabled */}
               {localConfig.verificationEnabled && (
                 <div className="mt-3 pt-3 border-t border-stroke-low">
                   <div className="text-xs font-semibold text-text-low mb-2">
-                    Verification Gateways (Top Staked)
+                    Top Staked Gateways (Pool of {topGateways.length})
                   </div>
                   {loadingGateways ? (
                     <div className="text-xs text-text-low">Loading gateways...</div>
-                  ) : verificationGateways.length > 0 ? (
+                  ) : topGateways.length > 0 ? (
                     <div className="space-y-1">
-                      {verificationGateways.map((gateway, index) => (
+                      {topGateways.slice(0, localConfig.trustedGatewayCount).map((gateway, index) => (
                         <div
-                          key={gateway}
+                          key={gateway.url}
                           className="flex items-center gap-2 text-xs"
                         >
-                          <span className="text-accent-teal-primary font-mono">#{index + 1}</span>
+                          <span className="text-accent-teal-primary font-mono w-5">#{index + 1}</span>
                           <a
-                            href={gateway}
+                            href={gateway.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-text-high hover:text-accent-teal-primary truncate font-mono"
-                            title={gateway}
+                            className="text-text-high hover:text-accent-teal-primary truncate font-mono flex-1"
+                            title={gateway.url}
                           >
-                            {gateway.replace('https://', '')}
+                            {gateway.url.replace('https://', '')}
                           </a>
+                          <span className="text-text-low font-mono whitespace-nowrap">
+                            {formatStake(gateway.totalStake)}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -339,7 +386,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                     <div className="text-xs text-text-low">No gateways available</div>
                   )}
                   <div className="mt-2 text-xs text-text-low">
-                    Content is verified using these top-staked gateways for integrity.
+                    {localConfig.trustedGatewayCount} gateway{localConfig.trustedGatewayCount > 1 ? 's' : ''} randomly selected from top 10 for each verification.
                   </div>
                 </div>
               )}

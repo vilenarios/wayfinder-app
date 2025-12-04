@@ -1,20 +1,31 @@
 import { ARIO } from '@ar.io/sdk';
+import type { GatewayWithStake } from '../types';
 
-const CACHE_KEY = 'wayfinder-trusted-gateways';
+const CACHE_KEY = 'wayfinder-trusted-gateways-v2';
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const TOP_N_GATEWAYS = 3;
-const FETCH_TOP_N = 10; // Fetch top 10 by total stake, then randomly pick 3
+const TOP_POOL_SIZE = 10; // Always fetch top 10 by stake, then pick from this pool
 
 interface TrustedGatewayCache {
-  gateways: string[];
+  gateways: GatewayWithStake[];
   fetchedAt: number;
 }
 
-export async function getTrustedGateways(): Promise<URL[]> {
-  // Check cache
+/**
+ * Get trusted gateways for verification, sorted by total stake.
+ * Returns gateways with stake info for display purposes.
+ *
+ * @param count Number of gateways to return (1-10, default 3)
+ * @returns Array of gateways with URL and stake info
+ */
+export async function getTrustedGateways(count: number = 3): Promise<GatewayWithStake[]> {
+  const validCount = Math.max(1, Math.min(10, count));
+
+  // Check cache for the top 10 pool
   const cached = getCachedGateways();
   if (cached) {
-    return cached.map(url => new URL(url));
+    // Shuffle and pick requested count from cached pool
+    const shuffled = shuffleArray([...cached]);
+    return shuffled.slice(0, validCount);
   }
 
   // Fetch from AR.IO network
@@ -22,9 +33,8 @@ export async function getTrustedGateways(): Promise<URL[]> {
     const ario = ARIO.mainnet();
 
     // Fetch ALL gateways since the SDK can't sort by total stake (operator + delegated)
-    // We need to calculate total stake ourselves and sort locally
     const result = await ario.getGateways({
-      limit: 1000, // Fetch all to ensure we don't miss high-stake gateways
+      limit: 1000,
     });
 
     if (!result.items || result.items.length === 0) {
@@ -35,38 +45,62 @@ export async function getTrustedGateways(): Promise<URL[]> {
     const gatewaysWithTotalStake = result.items
       .filter(gateway => gateway.status === 'joined' && gateway.settings?.fqdn)
       .map(gateway => ({
-        domain: gateway.settings.fqdn,
+        url: `https://${gateway.settings.fqdn}`,
         totalStake: (gateway.operatorStake || 0) + (gateway.totalDelegatedStake || 0),
       }));
 
-    // Sort by TOTAL stake (operator + delegated) descending
+    // Sort by TOTAL stake descending
     gatewaysWithTotalStake.sort((a, b) => b.totalStake - a.totalStake);
 
-    // Take top N by total stake, then shuffle and pick 3 for variety
-    const topByStake = gatewaysWithTotalStake.slice(0, FETCH_TOP_N);
-    for (let i = topByStake.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [topByStake[i], topByStake[j]] = [topByStake[j], topByStake[i]];
-    }
+    // Take top N by total stake for the pool
+    const topPool = gatewaysWithTotalStake.slice(0, TOP_POOL_SIZE);
 
-    const selectedGateways = topByStake.slice(0, TOP_N_GATEWAYS);
-    const gatewayUrls = selectedGateways.map(gw => `https://${gw.domain}`);
-
-    if (gatewayUrls.length === 0) {
+    if (topPool.length === 0) {
       throw new Error('No active staked gateways found');
     }
 
-    // Cache
-    cacheGateways(gatewayUrls);
+    // Cache the full pool (with stake info)
+    cacheGateways(topPool);
 
-    return gatewayUrls.map(url => new URL(url));
+    // Shuffle and return requested count
+    const shuffled = shuffleArray([...topPool]);
+    return shuffled.slice(0, validCount);
   } catch (error) {
     console.error('[Gateways] Failed to fetch staked gateways:', error);
-    return [new URL('https://arweave.net')];
+    return [{ url: 'https://arweave.net', totalStake: 0 }];
   }
 }
 
-function getCachedGateways(): string[] | null {
+/**
+ * Get the full pool of top-staked gateways (for display in settings).
+ * Returns all top 10 gateways sorted by stake (not shuffled).
+ */
+export async function getTopStakedGateways(): Promise<GatewayWithStake[]> {
+  // Check cache
+  const cached = getCachedGateways();
+  if (cached) {
+    // Return sorted by stake (cache is already sorted)
+    return cached;
+  }
+
+  // Fetch fresh - this will also populate the cache
+  // Call with max count to ensure we get full pool
+  await getTrustedGateways(TOP_POOL_SIZE);
+
+  // Now return from cache (sorted)
+  const freshCached = getCachedGateways();
+  return freshCached || [{ url: 'https://arweave.net', totalStake: 0 }];
+}
+
+function shuffleArray<T>(array: T[]): T[] {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+function getCachedGateways(): GatewayWithStake[] | null {
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return null;
@@ -85,7 +119,7 @@ function getCachedGateways(): string[] | null {
   }
 }
 
-function cacheGateways(gateways: string[]): void {
+function cacheGateways(gateways: GatewayWithStake[]): void {
   try {
     const cache: TrustedGatewayCache = {
       gateways,
