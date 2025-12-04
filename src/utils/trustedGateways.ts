@@ -31,29 +31,19 @@ export async function getTrustedGateways(): Promise<URL[]> {
       throw new Error('No gateways returned from AR.IO network');
     }
 
-    // Filter active gateways and calculate total stake
+    // Filter active gateways and calculate total stake (operator + delegated)
     const gatewaysWithTotalStake = result.items
       .filter(gateway => gateway.status === 'joined' && gateway.settings?.fqdn)
-      .map(gateway => {
-        const totalStake = (gateway.operatorStake || 0) + (gateway.totalDelegatedStake || 0);
-        return {
-          domain: gateway.settings.fqdn,
-          totalStake,
-          address: gateway.gatewayAddress,
-        };
-      });
+      .map(gateway => ({
+        domain: gateway.settings.fqdn,
+        totalStake: (gateway.operatorStake || 0) + (gateway.totalDelegatedStake || 0),
+      }));
 
     // Sort by TOTAL stake (operator + delegated) descending
     gatewaysWithTotalStake.sort((a, b) => b.totalStake - a.totalStake);
 
-    // Take top N (e.g., top 10) by total stake
+    // Take top N by total stake, then shuffle and pick 3 for variety
     const topByStake = gatewaysWithTotalStake.slice(0, FETCH_TOP_N);
-
-    console.log('[Gateways] Top gateways by total stake:', topByStake.map(gw =>
-      `${gw.domain} (${(gw.totalStake / 1_000_000).toFixed(1)}M)`
-    ).join(', '));
-
-    // Shuffle the top N and pick 3 for variety while maintaining high trust
     for (let i = topByStake.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [topByStake[i], topByStake[j]] = [topByStake[j], topByStake[i]];
