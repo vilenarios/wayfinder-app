@@ -5,6 +5,10 @@ import { getTrustedGateways } from '../utils/trustedGateways';
 import type { WayfinderConfig, VerificationMethod } from '../types';
 import packageJson from '../../package.json';
 
+// Feature flag: Signature verification is hidden until SDK fixes ANS-104 data item support
+// The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions
+const SHOW_VERIFICATION_METHOD_SELECTOR = false;
+
 interface SettingsFlyoutProps {
   isOpen: boolean;
   onClose: () => void;
@@ -183,11 +187,8 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                 </div>
               </label>
 
-              {/* Verification Method - HIDDEN: Signature verification doesn't work reliably for data items (ANS-104).
-                  The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions.
-                  Most Arweave content is bundled as data items, so signature verification fails.
-                  Keeping code for when SDK is fixed. */}
-              {false && localConfig.verificationEnabled && (
+              {/* Verification Method - controlled by SHOW_VERIFICATION_METHOD_SELECTOR feature flag */}
+              {SHOW_VERIFICATION_METHOD_SELECTOR && localConfig.verificationEnabled && (
                 <div className="mt-3 pt-3 border-t border-stroke-low">
                   <div className="text-sm font-medium text-text-high mb-2">
                     Verification Method
