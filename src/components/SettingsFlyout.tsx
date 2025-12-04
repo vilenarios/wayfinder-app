@@ -9,14 +9,17 @@ import packageJson from '../../package.json';
 // The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions
 const SHOW_VERIFICATION_METHOD_SELECTOR = false;
 
-/** Format stake amount for display (e.g., 9200000 -> "9.2M IO") */
-function formatStake(stake: number): string {
-  if (stake >= 1_000_000) {
-    return `${(stake / 1_000_000).toFixed(1)}M IO`;
-  } else if (stake >= 1_000) {
-    return `${(stake / 1_000).toFixed(0)}K IO`;
+/** Format stake amount for display. Stake is in mIO (1 IO = 1,000,000 mIO) */
+function formatStake(mioStake: number): string {
+  const ioStake = mioStake / 1_000_000; // Convert mIO to IO
+  if (ioStake >= 1_000_000) {
+    return `${(ioStake / 1_000_000).toFixed(1)}M IO`;
+  } else if (ioStake >= 1_000) {
+    return `${(ioStake / 1_000).toFixed(1)}K IO`;
+  } else if (ioStake >= 1) {
+    return `${ioStake.toFixed(0)} IO`;
   }
-  return `${stake} IO`;
+  return `${mioStake} mIO`;
 }
 
 interface SettingsFlyoutProps {
