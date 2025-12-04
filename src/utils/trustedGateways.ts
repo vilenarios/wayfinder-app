@@ -3,6 +3,7 @@ import { ARIO } from '@ar.io/sdk';
 const CACHE_KEY = 'wayfinder-trusted-gateways';
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const TOP_N_GATEWAYS = 3;
+const FETCH_TOP_N = 10; // Fetch top 10 by total stake, then randomly pick 3
 
 interface TrustedGatewayCache {
   gateways: string[];
@@ -20,12 +21,10 @@ export async function getTrustedGateways(): Promise<URL[]> {
   try {
     const ario = ARIO.mainnet();
 
-    // Fetch more gateways so we can sort by TOTAL stake (operator + delegated)
-    // The SDK only sorts by individual fields, not combined totals
+    // Fetch ALL gateways since the SDK can't sort by total stake (operator + delegated)
+    // We need to calculate total stake ourselves and sort locally
     const result = await ario.getGateways({
-      sortBy: 'operatorStake',
-      sortOrder: 'desc',
-      limit: 50, // Fetch more to ensure we get the true top by total stake
+      limit: 1000, // Fetch all to ensure we don't miss high-stake gateways
     });
 
     if (!result.items || result.items.length === 0) {
@@ -40,15 +39,28 @@ export async function getTrustedGateways(): Promise<URL[]> {
         return {
           domain: gateway.settings.fqdn,
           totalStake,
+          address: gateway.gatewayAddress,
         };
       });
 
     // Sort by TOTAL stake (operator + delegated) descending
     gatewaysWithTotalStake.sort((a, b) => b.totalStake - a.totalStake);
 
-    // Take top N
-    const topGateways = gatewaysWithTotalStake.slice(0, TOP_N_GATEWAYS);
-    const gatewayUrls = topGateways.map(gw => `https://${gw.domain}`);
+    // Take top N (e.g., top 10) by total stake
+    const topByStake = gatewaysWithTotalStake.slice(0, FETCH_TOP_N);
+
+    console.log('[Gateways] Top gateways by total stake:', topByStake.map(gw =>
+      `${gw.domain} (${(gw.totalStake / 1_000_000).toFixed(1)}M)`
+    ).join(', '));
+
+    // Shuffle the top N and pick 3 for variety while maintaining high trust
+    for (let i = topByStake.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [topByStake[i], topByStake[j]] = [topByStake[j], topByStake[i]];
+    }
+
+    const selectedGateways = topByStake.slice(0, TOP_N_GATEWAYS);
+    const gatewayUrls = selectedGateways.map(gw => `https://${gw.domain}`);
 
     if (gatewayUrls.length === 0) {
       throw new Error('No active staked gateways found');
