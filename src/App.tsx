@@ -438,7 +438,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setSearchInput(input);
     setIsSearched(true);
     setIsCollapsed(false); // Expand when doing a new search
-    setShouldAutoOpenInNewTab(false); // Reset flag
     setRetryAttempts(0); // Reset retry attempts for new search
     setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
 
