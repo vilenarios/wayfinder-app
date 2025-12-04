@@ -3,14 +3,11 @@ import { isValidInput } from '../utils/detectInputType';
 
 interface SearchBarProps {
   onSearch: (input: string) => void;
-  onSearchAndOpenInNewTab: (input: string) => void;
   isSearched: boolean;
   currentInput: string;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  onOpenInNewTab: () => void;
   onOpenSettings: () => void;
-  hasResolvedUrl: boolean;
   resolvedUrl: string | null;
   /** Optional verification badge to display in the toolbar */
   verificationBadge?: React.ReactNode;
@@ -18,14 +15,11 @@ interface SearchBarProps {
 
 export const SearchBar = memo(function SearchBar({
   onSearch,
-  onSearchAndOpenInNewTab,
   isSearched,
   currentInput,
   isCollapsed,
   onToggleCollapse,
-  onOpenInNewTab,
   onOpenSettings,
-  hasResolvedUrl,
   resolvedUrl,
   verificationBadge,
 }: SearchBarProps) {
@@ -64,18 +58,6 @@ export const SearchBar = memo(function SearchBar({
     e.preventDefault();
     if (validateInput()) {
       onSearch(input.trim());
-    }
-  };
-
-  const handleOpenInNewTabClick = () => {
-    if (isSearched && hasResolvedUrl) {
-      // On results page with resolved URL - open it directly
-      onOpenInNewTab();
-    } else {
-      // On homepage or no resolved URL yet - validate and search, then auto-open
-      if (validateInput()) {
-        onSearchAndOpenInNewTab(input.trim());
-      }
     }
   };
 
@@ -308,28 +290,6 @@ export const SearchBar = memo(function SearchBar({
                   />
                 </svg>
                 Explore
-              </button>
-
-              <button
-                type="button"
-                onClick={handleOpenInNewTabClick}
-                className="px-4 py-2.5 md:py-3 bg-container-L2 text-text-high rounded-lg hover:bg-container-L3 transition-colors font-medium shadow-sm hover:shadow-md border border-stroke-low flex items-center justify-center gap-2"
-                title="Open in new tab"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                  />
-                </svg>
-                Open in New Tab
               </button>
             </div>
           )}

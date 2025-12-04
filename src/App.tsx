@@ -189,7 +189,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
   const [isSearched, setIsSearched] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [shouldAutoOpenInNewTab, setShouldAutoOpenInNewTab] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchCounter, setSearchCounter] = useState(0);
   const [retryAttempts, setRetryAttempts] = useState(0);
@@ -508,32 +507,12 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setSearchCounter((prev) => prev + 1);
   }, [retryAttempts, setGatewayRefreshCounter, config.verificationEnabled, searchInput]);
 
-  const handleOpenInNewTab = useCallback(() => {
-    if (resolvedUrl) {
-      window.open(resolvedUrl, '_blank', 'noopener,noreferrer');
-    }
-  }, [resolvedUrl]);
-
   const handleToggleCollapse = useCallback(() => {
     setIsCollapsed((prev) => !prev);
   }, []);
 
   const handleUrlResolved = useCallback((url: string | null) => {
     setResolvedUrl(url);
-  }, []);
-
-  const handleSearchAndOpenInNewTab = useCallback((input: string) => {
-    setSearchInput(input);
-    setIsSearched(true);
-    setIsCollapsed(false);
-    setShouldAutoOpenInNewTab(true); // Set flag to auto-open
-    setRetryAttempts(0); // Reset retry attempts for new search
-    setSearchCounter((prev) => prev + 1); // Increment to force re-fetch with new gateway
-
-    // Update URL with search query
-    const url = new URL(window.location.href);
-    url.searchParams.set('q', input);
-    window.history.pushState({}, '', url.toString());
   }, []);
 
   const handleOpenSettings = useCallback(() => {
@@ -563,16 +542,6 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     setShowBlockedModal(false);
   }, []);
 
-  // Auto-open in new tab when URL resolves and flag is set
-  useEffect(() => {
-    if (shouldAutoOpenInNewTab && resolvedUrl) {
-      window.open(resolvedUrl, '_blank', 'noopener,noreferrer');
-      // Reset flag after opening - this is intentional side effect management
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShouldAutoOpenInNewTab(false);
-    }
-  }, [shouldAutoOpenInNewTab, resolvedUrl]);
-
   // Determine if content should be blocked (strict mode + verification failed + user hasn't bypassed)
   const shouldBlockContent = config.verificationEnabled &&
     config.strictVerification &&
@@ -598,14 +567,11 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
     <div className="h-screen flex flex-col overflow-hidden">
       <SearchBar
         onSearch={handleSearch}
-        onSearchAndOpenInNewTab={handleSearchAndOpenInNewTab}
         isSearched={isSearched}
         currentInput={searchInput}
         isCollapsed={isCollapsed}
         onToggleCollapse={handleToggleCollapse}
-        onOpenInNewTab={handleOpenInNewTab}
         onOpenSettings={handleOpenSettings}
-        hasResolvedUrl={!!resolvedUrl}
         resolvedUrl={resolvedUrl}
         verificationBadge={verificationBadgeElement}
       />
