@@ -9,17 +9,17 @@ import packageJson from '../../package.json';
 // The SDK's SignatureVerificationStrategy uses /tx/{txId} which only works for L1 transactions
 const SHOW_VERIFICATION_METHOD_SELECTOR = false;
 
-/** Format stake amount for display. Stake is in mIO (1 IO = 1,000,000 mIO) */
-function formatStake(mioStake: number): string {
-  const ioStake = mioStake / 1_000_000; // Convert mIO to IO
-  if (ioStake >= 1_000_000) {
-    return `${(ioStake / 1_000_000).toFixed(1)}M IO`;
-  } else if (ioStake >= 1_000) {
-    return `${(ioStake / 1_000).toFixed(1)}K IO`;
-  } else if (ioStake >= 1) {
-    return `${ioStake.toFixed(0)} IO`;
+/** Format stake amount for display. Stake is in mARIO (1 ARIO = 1,000,000 mARIO) */
+function formatStake(marioStake: number): string {
+  const arioStake = marioStake / 1_000_000; // Convert mARIO to ARIO
+  if (arioStake >= 1_000_000) {
+    return `${(arioStake / 1_000_000).toFixed(1)}M`;
+  } else if (arioStake >= 1_000) {
+    return `${(arioStake / 1_000).toFixed(1)}K`;
+  } else if (arioStake >= 1) {
+    return `${arioStake.toFixed(0)}`;
   }
-  return `${mioStake} mIO`;
+  return '<1';
 }
 
 interface SettingsFlyoutProps {
@@ -369,18 +369,18 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                           key={gateway.url}
                           className="flex items-center gap-2 text-xs"
                         >
-                          <span className="text-accent-teal-primary font-mono w-5">#{index + 1}</span>
+                          <span className="text-accent-teal-primary font-mono w-6 flex-shrink-0">#{index + 1}</span>
                           <a
                             href={gateway.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-text-high hover:text-accent-teal-primary truncate font-mono flex-1"
+                            className="text-text-high hover:text-accent-teal-primary truncate font-mono flex-1 min-w-0"
                             title={gateway.url}
                           >
                             {gateway.url.replace('https://', '')}
                           </a>
-                          <span className="text-text-low font-mono whitespace-nowrap">
-                            {formatStake(gateway.totalStake)}
+                          <span className="text-text-low font-mono whitespace-nowrap flex-shrink-0">
+                            {formatStake(gateway.totalStake)} ARIO
                           </span>
                         </div>
                       ))}
