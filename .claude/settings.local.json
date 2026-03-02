@@ -12,7 +12,17 @@
       "Bash(curl:*)",
       "Bash(git commit:*)",
       "Bash(npm ls:*)",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:myh.tw)",
+      "WebFetch(domain:developer.chrome.com)",
+      "WebFetch(domain:arweave.net)",
+      "WebFetch(domain:github.com)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

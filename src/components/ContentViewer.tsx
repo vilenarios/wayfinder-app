@@ -6,6 +6,7 @@ import { detectInputType } from '../utils/detectInputType';
 import { useWayfinderConfig } from '../context/WayfinderConfigContext';
 import { checkGatewayHealth } from '../utils/gatewayHealthCheck';
 import { MAX_GATEWAY_AUTO_RETRIES } from '../utils/constants';
+import { getSandboxUrl } from '../utils/sandboxUrl';
 
 interface ContentViewerProps {
   input: string;
@@ -152,13 +153,19 @@ export const ContentViewer = memo(function ContentViewer({ input, onRetry, onUrl
                 resolvedUrl.includes('content-type=application/pdf') ||
                 resolvedUrl.includes('contentType=application/pdf');
 
+  // For PDFs, construct the direct sandbox URL to avoid redirects
+  // This prevents Chrome from blocking cross-origin object tags
+  const pdfUrl = isPDF && inputType === 'txId'
+    ? getSandboxUrl(input, resolvedUrl)
+    : resolvedUrl;
+
   return (
     <div className="w-full h-full bg-container-L1">
       {isPDF ? (
-        // Use object tag for PDFs - proper semantic HTML for embedded documents
-        // Gateway redirects to sandbox subdomain for security
+        // Use object tag for PDFs with direct sandbox URL
+        // Sandbox subdomain provides security isolation
         <object
-          data={resolvedUrl}
+          data={pdfUrl}
           type="application/pdf"
           className="w-full h-full"
           aria-label={`PDF content for ${input}`}
@@ -166,7 +173,7 @@ export const ContentViewer = memo(function ContentViewer({ input, onRetry, onUrl
           <div className="flex flex-col items-center justify-center h-full p-8 text-text-high">
             <p className="mb-4">Unable to display PDF in browser.</p>
             <a
-              href={resolvedUrl}
+              href={pdfUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="px-4 py-2 bg-accent-teal-primary text-white rounded hover:bg-accent-teal-secondary transition-colors"
