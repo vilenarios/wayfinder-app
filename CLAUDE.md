@@ -401,12 +401,13 @@ This two-layer approach ensures compatibility while optimizing development perfo
 
 ## iframe Security Configuration
 
-The ContentViewer iframe (src/components/ContentViewer.tsx:101) and verification-mode iframe (App.tsx:621-631) use these sandbox attributes:
+The ContentViewer iframe (src/components/ContentViewer.tsx:154) and verification-mode iframe (App.tsx:643) use these sandbox attributes:
 - `allow-scripts` - Required for interactive content
 - `allow-same-origin` - Required for certain content types
 - `allow-forms` - Allows form submissions
 - `allow-popups` - Allows opening new windows
 - `allow-popups-to-escape-sandbox` - Required for some navigation
+- `allow-downloads` - Required for PDF rendering and file downloads
 
 These settings balance functionality with security for displaying arbitrary Arweave content.
 

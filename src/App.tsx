@@ -640,7 +640,7 @@ function AppContent({ setGatewayRefreshCounter }: { gatewayRefreshCounter: numbe
                       ? 'invisible absolute'
                       : ''
                   }`}
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
                   title={`Verified content for ${searchInput}`}
                 />
               )}
