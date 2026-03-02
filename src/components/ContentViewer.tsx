@@ -155,25 +155,15 @@ export const ContentViewer = memo(function ContentViewer({ input, onRetry, onUrl
   return (
     <div className="w-full h-full bg-container-L1">
       {isPDF ? (
-        // Use object tag for PDFs - better compatibility without sandbox issues
-        <object
-          data={resolvedUrl}
-          type="application/pdf"
-          className="w-full h-full"
-        >
-          <div className="flex flex-col items-center justify-center h-full p-8 text-text-high">
-            <p className="mb-4">Unable to display PDF in browser.</p>
-            <a
-              href={resolvedUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 bg-accent-teal-primary text-white rounded hover:bg-accent-teal-secondary transition-colors"
-            >
-              Open PDF in New Tab
-            </a>
-          </div>
-        </object>
+        // Use iframe WITHOUT sandbox for PDFs - sandbox blocks browser PDF viewer
+        // PDFs are redirected to sandbox subdomains by the gateway for security
+        <iframe
+          src={resolvedUrl}
+          className="w-full h-full border-0"
+          title={`PDF content for ${input}`}
+        />
       ) : (
+        // Use sandboxed iframe for other content
         <iframe
           src={resolvedUrl}
           className="w-full h-full border-0"
