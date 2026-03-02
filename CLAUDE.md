@@ -66,10 +66,11 @@ The app uses React Context for configuration management with localStorage persis
 
 2. **WayfinderProvider** from @ar.io/wayfinder-react: Manages gateway routing and URL resolution
    - Receives configuration from WayfinderConfigContext
-   - Re-initializes when config changes (via key prop in App.tsx:165-168)
+   - Re-initializes when config changes (via key prop in App.tsx:180)
    - Provides `useWayfinderUrl` hook for resolving ar:// URLs to gateway URLs
    - **Critical**: Must be configured with `routingSettings.strategy` or it will have no gateways available
-   - Uses `TrustedPeersGatewaysProvider` to fetch gateway list from arweave.net
+   - Uses `TrustedPeersGatewaysProvider` to fetch gateway list from AR.IO gateways (turbo-gateway.com, permagate.io)
+   - Falls back to AR.IO SDK for gateway discovery if endpoints fail
    - Wraps provider with `SimpleCacheGatewaysProvider` for 3-minute caching
 
 ### Component Hierarchy
@@ -124,15 +125,18 @@ const params = inputType === 'txId' ? { txId: input } : { arnsName: input };
 
 ### Gateway Configuration
 
-The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:26-172):
+The app configures Wayfinder with a resilient, multi-layered gateway provider system (App.tsx:62-124):
 
-1. **Resilient Gateway Fetching**: Multi-layer fallback system with minimal hardcoding
-   - **Primary**: Tries arweave.net/ar-io/peers (only hardcoded gateway)
-   - **Backup**: Tries [host-gateway]/ar-io/peers where host-gateway is extracted from the URL
+1. **Resilient Gateway Fetching**: 5-tier fallback system with zero single points of failure
+   - **Primary**: turbo-gateway.com/ar-io/peers
+   - **Secondary**: permagate.io/ar-io/peers
+   - **Tertiary**: [host-gateway]/ar-io/peers where host-gateway is extracted from the URL
      - Example: viewing from wayfinder.vilenarios.com → tries vilenarios.com/ar-io/peers
-   - **Fallback**: If peers endpoints fail, uses the host gateway directly
      - Self-healing: if you can load the app, that gateway works!
-   - **Local Dev**: Falls back to arweave.net when localhost is detected
+   - **Quaternary**: AR.IO SDK queries the network contract for gateway list
+     - Most reliable method, queries decentralized smart contract
+     - Returns all active gateways with valid FQDNs
+   - **Ultimate Fallback**: turbo-gateway.com directly for content fetching
    - Eliminates single point of failure - app always works
 
 2. **Gateway Limiting**: Randomly selects 20 gateways using Fisher-Yates shuffle
@@ -186,13 +190,16 @@ When `verificationEnabled` is true, the app uses a service worker to verify Arwe
 - Single files (non-manifests) are verified the same way but don't have sub-resources
 
 **Dual Gateway Pools** (src/utils/trustedGateways.ts):
-- `getTrustedGateways()`: Top 3 gateways by total stake (operator + delegated) for hash verification
-  - Cached in localStorage for 24 hours
+- `getTrustedGateways(count)`: Configurable number of gateways by total stake (operator + delegated) for hash verification
+  - Default count is 3, configurable via settings (1-10 range)
+  - Fetches top 10 by stake, caches them for 24 hours, then randomly selects `count` from that pool
   - Uses `@ar.io/sdk` to query AR.IO network
-- `getRoutingGateways()`: Broader pool from arweave.net/ar-io/peers for content fetching
+- `getTopStakedGateways()`: Returns the full cached pool of top 10 gateways (for settings display)
+- `getRoutingGateways()`: Broader pool from AR.IO gateway APIs for content fetching
+  - Tries turbo-gateway.com/ar-io/peers, then permagate.io/ar-io/peers
+  - Falls back to AR.IO SDK if both endpoints fail
   - Randomly selects 20 gateways from available peers
   - Shuffled on each verification for load distribution
-  - Provides fallback if trusted gateway fetch fails
 
 **Verification Flow**:
 1. User enables verification in settings → triggers service worker registration
@@ -434,10 +441,16 @@ All components using Wayfinder hooks (like ContentViewer) receive `{ resolvedUrl
 
 ## Troubleshooting
 
-**"No gateways available" error**: The WayfinderProvider requires `routingSettings.strategy` to be configured. Check App.tsx:26-161 to ensure:
-- `TrustedPeersGatewaysProvider` is initialized with a valid trusted gateway URL
+**"No gateways available" error**: The WayfinderProvider requires `routingSettings.strategy` to be configured. Check App.tsx:62-185 to ensure:
+- `TrustedPeersGatewaysProvider` is initialized with valid AR.IO gateway URLs (turbo-gateway.com, permagate.io)
+- AR.IO SDK fallback is working (check console for SDK error messages)
 - `createRoutingStrategy` is called with the gatewaysProvider
 - `routingSettings.strategy` is passed to WayfinderProvider
+
+**Gateway API endpoints failing**: If both turbo-gateway.com and permagate.io /ar-io/peers endpoints are down:
+- Check console logs to see which fallback tier is being used
+- AR.IO SDK should provide automatic fallback to network contract
+- Verify network connection and that AR.IO network is accessible
 
 **Build errors about missing modules**:
 - If using local Wayfinder packages, rebuild them: `cd ../wayfinder && npm run build`

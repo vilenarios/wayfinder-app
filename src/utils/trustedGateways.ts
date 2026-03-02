@@ -67,7 +67,7 @@ export async function getTrustedGateways(count: number = 3): Promise<GatewayWith
     return shuffled.slice(0, validCount);
   } catch (error) {
     console.error('[Gateways] Failed to fetch staked gateways:', error);
-    return [{ url: 'https://arweave.net', totalStake: 0 }];
+    return [{ url: 'https://turbo-gateway.com', totalStake: 0 }];
   }
 }
 
@@ -89,7 +89,7 @@ export async function getTopStakedGateways(): Promise<GatewayWithStake[]> {
 
   // Now return from cache (sorted)
   const freshCached = getCachedGateways();
-  return freshCached || [{ url: 'https://arweave.net', totalStake: 0 }];
+  return freshCached || [{ url: 'https://turbo-gateway.com', totalStake: 0 }];
 }
 
 function shuffleArray<T>(array: T[]): T[] {
@@ -136,55 +136,104 @@ export function clearTrustedGatewayCache(): void {
 }
 
 /**
- * Get a broader pool of gateways for content routing/fetching.
- * This fetches from arweave.net/ar-io/peers which returns active gateways.
+ * Fetch gateways from an AR.IO gateway's /ar-io/peers endpoint.
  */
-export async function getRoutingGateways(): Promise<URL[]> {
-  try {
-    const response = await fetch('https://arweave.net/ar-io/peers');
-    if (!response.ok) {
-      throw new Error(`Failed to fetch peers: ${response.status}`);
-    }
+async function fetchPeersFromGateway(gatewayUrl: string): Promise<URL[]> {
+  const response = await fetch(`${gatewayUrl}/ar-io/peers`, {
+    signal: AbortSignal.timeout(10000), // 10 second timeout
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch peers from ${gatewayUrl}: ${response.status}`);
+  }
 
-    const data = await response.json();
+  const data = await response.json();
 
-    // Extract gateway URLs from response
-    // Format: { gateways: { "domain:port": { url: "https://...", dataWeight: 50 }, ... } }
-    const gateways: URL[] = [];
+  // Extract gateway URLs from response
+  // Format: { gateways: { "domain:port": { url: "https://...", dataWeight: 50 }, ... } }
+  const gateways: URL[] = [];
 
-    if (data.gateways && typeof data.gateways === 'object') {
-      // Extract URLs from gateway objects
-      for (const gatewayInfo of Object.values(data.gateways)) {
-        const info = gatewayInfo as { url?: string };
-        if (info.url && typeof info.url === 'string') {
-          try {
-            gateways.push(new URL(info.url));
-          } catch {
-            // Skip invalid URLs
-          }
-        }
-      }
-    } else if (Array.isArray(data)) {
-      // Fallback: handle array format if endpoint changes
-      for (const peer of data) {
-        if (!peer || typeof peer !== 'string') continue;
+  if (data.gateways && typeof data.gateways === 'object') {
+    // Extract URLs from gateway objects
+    for (const gatewayInfo of Object.values(data.gateways)) {
+      const info = gatewayInfo as { url?: string };
+      if (info.url && typeof info.url === 'string') {
         try {
-          if (peer.startsWith('http://') || peer.startsWith('https://')) {
-            gateways.push(new URL(peer));
-          } else {
-            gateways.push(new URL(`https://${peer}`));
-          }
+          gateways.push(new URL(info.url));
         } catch {
           // Skip invalid URLs
         }
       }
-    } else {
-      throw new Error('Unexpected response format from peers endpoint');
+    }
+  } else if (Array.isArray(data)) {
+    // Fallback: handle array format if endpoint changes
+    for (const peer of data) {
+      if (!peer || typeof peer !== 'string') continue;
+      try {
+        if (peer.startsWith('http://') || peer.startsWith('https://')) {
+          gateways.push(new URL(peer));
+        } else {
+          gateways.push(new URL(`https://${peer}`));
+        }
+      } catch {
+        // Skip invalid URLs
+      }
+    }
+  }
+
+  if (gateways.length === 0) {
+    throw new Error('No valid gateways found in peers response');
+  }
+
+  return gateways;
+}
+
+/**
+ * Fetch gateways from AR.IO network contract using SDK.
+ * This is the most reliable method but requires an API call to the smart contract.
+ */
+async function fetchGatewaysFromSDK(): Promise<URL[]> {
+  try {
+    const ario = ARIO.mainnet();
+
+    // Fetch active gateways from the network
+    const result = await ario.getGateways({
+      limit: 100, // Get a good pool size
+    });
+
+    if (!result.items || result.items.length === 0) {
+      throw new Error('No gateways returned from AR.IO network');
     }
 
+    // Filter for active gateways with valid FQDNs
+    const gateways = result.items
+      .filter(gateway => gateway.status === 'joined' && gateway.settings?.fqdn)
+      .map(gateway => new URL(`https://${gateway.settings.fqdn}`));
+
     if (gateways.length === 0) {
-      throw new Error('No valid gateways found in peers response');
+      throw new Error('No active gateways with FQDNs found');
     }
+
+    return gateways;
+  } catch (error) {
+    console.error('[Gateways] Failed to fetch from AR.IO SDK:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get a broader pool of gateways for content routing/fetching.
+ *
+ * Strategy:
+ * 1. Try turbo-gateway.com/ar-io/peers (primary)
+ * 2. Try permagate.io/ar-io/peers (secondary)
+ * 3. Use AR.IO SDK to fetch from network contract (most reliable)
+ * 4. Return empty array (caller will use verification gateways as fallback)
+ */
+export async function getRoutingGateways(): Promise<URL[]> {
+  // Try turbo-gateway.com first
+  try {
+    console.log('[Gateways] Fetching from turbo-gateway.com/ar-io/peers');
+    const gateways = await fetchPeersFromGateway('https://turbo-gateway.com');
 
     // Shuffle for load distribution
     for (let i = gateways.length - 1; i > 0; i--) {
@@ -193,9 +242,47 @@ export async function getRoutingGateways(): Promise<URL[]> {
     }
 
     // Return a reasonable subset (e.g., 20 gateways)
-    return gateways.slice(0, Math.min(20, gateways.length));
+    const subset = gateways.slice(0, Math.min(20, gateways.length));
+    console.log(`[Gateways] Got ${subset.length} gateways from turbo-gateway.com`);
+    return subset;
   } catch (error) {
-    console.error('[Gateways] Failed to fetch routing gateways:', error);
+    console.warn('[Gateways] turbo-gateway.com failed, trying permagate.io:', error);
+  }
+
+  // Try permagate.io as fallback
+  try {
+    console.log('[Gateways] Fetching from permagate.io/ar-io/peers');
+    const gateways = await fetchPeersFromGateway('https://permagate.io');
+
+    // Shuffle for load distribution
+    for (let i = gateways.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [gateways[i], gateways[j]] = [gateways[j], gateways[i]];
+    }
+
+    const subset = gateways.slice(0, Math.min(20, gateways.length));
+    console.log(`[Gateways] Got ${subset.length} gateways from permagate.io`);
+    return subset;
+  } catch (error) {
+    console.warn('[Gateways] permagate.io failed, falling back to AR.IO SDK:', error);
+  }
+
+  // Ultimate fallback: use AR.IO SDK to fetch from network contract
+  try {
+    console.log('[Gateways] Fetching from AR.IO network via SDK');
+    const gateways = await fetchGatewaysFromSDK();
+
+    // Shuffle for load distribution
+    for (let i = gateways.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [gateways[i], gateways[j]] = [gateways[j], gateways[i]];
+    }
+
+    const subset = gateways.slice(0, Math.min(20, gateways.length));
+    console.log(`[Gateways] Got ${subset.length} gateways from AR.IO SDK`);
+    return subset;
+  } catch (error) {
+    console.error('[Gateways] All routing gateway sources failed:', error);
     // Return empty array - service worker will fall back to verification gateways
     return [];
   }

@@ -164,7 +164,7 @@ export function SettingsFlyout({ isOpen, onClose }: SettingsFlyoutProps) {
                         preferredGateway: e.target.value,
                       })
                     }
-                    placeholder="https://arweave.net"
+                    placeholder="https://turbo-gateway.com"
                     className="w-full px-3 py-2 bg-container-L3 border border-stroke-low text-text-high placeholder:text-text-low rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-teal-primary focus:border-transparent text-sm"
                   />
                   <p className="text-xs text-text-low mt-2">

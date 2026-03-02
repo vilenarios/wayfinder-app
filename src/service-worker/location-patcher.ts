@@ -28,7 +28,7 @@ function createLocationPatchScript(identifier: string, gatewayUrl: string): stri
   try {
     gatewayHost = new URL(gatewayUrl).host;
   } catch {
-    gatewayHost = 'arweave.net';
+    gatewayHost = 'turbo-gateway.com';
   }
 
   const simulatedHost = `${identifier}.${gatewayHost}`;

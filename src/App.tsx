@@ -62,10 +62,19 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
     // Create a resilient gateways provider with multiple fallbacks
     const resilientProvider = {
       async getGateways(): Promise<URL[]> {
-        // Build list of peers endpoints to try
-        const peersEndpoints: string[] = ['https://arweave.net'];
+        // Strategy:
+        // 1. Try turbo-gateway.com (primary AR.IO gateway)
+        // 2. Try permagate.io (secondary AR.IO gateway)
+        // 3. Try host gateway if available (self-healing for deployed apps)
+        // 4. Use AR.IO SDK to fetch from network contract
+        // 5. Ultimate fallback to turbo-gateway.com directly for content
 
-        // Add the host gateway as backup peers source
+        const peersEndpoints: string[] = [
+          'https://turbo-gateway.com',
+          'https://permagate.io',
+        ];
+
+        // Add the host gateway as additional fallback
         const hostGateway = getHostGateway();
         if (hostGateway) {
           peersEndpoints.push(hostGateway.toString());
@@ -77,20 +86,40 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
             const provider = new TrustedPeersGatewaysProvider({ trustedGateway });
             const gateways = await provider.getGateways();
             if (gateways && gateways.length > 0) {
+              console.log(`[WayfinderWrapper] Got ${gateways.length} gateways from ${trustedGateway}`);
               return gateways;
             }
-          } catch {
+          } catch (error) {
+            console.warn(`[WayfinderWrapper] Failed to fetch from ${trustedGateway}:`, error);
             // Try next endpoint
           }
         }
 
-        // If all peers endpoints fail, just use the host gateway itself
-        if (hostGateway) {
-          return [hostGateway];
+        // If all peers endpoints fail, try AR.IO SDK as fallback
+        try {
+          console.log('[WayfinderWrapper] Falling back to AR.IO SDK');
+          const { ARIO } = await import('@ar.io/sdk');
+          const ario = ARIO.mainnet();
+
+          const result = await ario.getGateways({ limit: 100 });
+
+          if (result.items && result.items.length > 0) {
+            const gateways = result.items
+              .filter(gateway => gateway.status === 'joined' && gateway.settings?.fqdn)
+              .map(gateway => new URL(`https://${gateway.settings.fqdn}`));
+
+            if (gateways.length > 0) {
+              console.log(`[WayfinderWrapper] Got ${gateways.length} gateways from AR.IO SDK`);
+              return gateways;
+            }
+          }
+        } catch (error) {
+          console.warn('[WayfinderWrapper] AR.IO SDK fallback failed:', error);
         }
 
-        // Ultimate fallback for local development
-        return [new URL('https://arweave.net')];
+        // Ultimate fallback: use turbo-gateway.com directly for content
+        console.warn('[WayfinderWrapper] Using ultimate fallback: turbo-gateway.com');
+        return [new URL('https://turbo-gateway.com')];
       },
     };
 
@@ -136,7 +165,7 @@ function WayfinderWrapper({ children, gatewayRefreshCounter }: { children: React
       const preferredGatewayRaw = config.preferredGateway?.trim();
       const preferredGateway = preferredGatewayRaw && preferredGatewayRaw.length > 0
         ? preferredGatewayRaw
-        : 'https://arweave.net';
+        : 'https://turbo-gateway.com';
 
       // Use StaticRoutingStrategy to always use the preferred gateway
       // This ensures the gateway is used without ping checks or timeouts

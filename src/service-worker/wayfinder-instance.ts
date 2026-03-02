@@ -127,7 +127,7 @@ export function initializeWayfinder(config: SwWayfinderConfig): void {
   // Handle 'preferred' strategy separately using StaticRoutingStrategy
   let routingStrategy;
   if (config.routingStrategy === 'preferred' && config.preferredGateway) {
-    const preferredGateway = config.preferredGateway.trim() || 'https://arweave.net';
+    const preferredGateway = config.preferredGateway.trim() || 'https://turbo-gateway.com';
     logger.debug(TAG, `Using preferred gateway: ${preferredGateway}`);
     routingStrategy = new StaticRoutingStrategy({
       gateway: preferredGateway,
