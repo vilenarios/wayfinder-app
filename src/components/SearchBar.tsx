@@ -140,7 +140,7 @@ export const SearchBar = memo(function SearchBar({
               <h1 className="text-4xl md:text-5xl font-bold text-white">Wayfinder</h1>
             </div>
             <p className="text-text-low text-base md:text-lg">
-              Decentralized access to Arweave via AR.IO Network
+              Decentralized access to Arweave via the ar.io
             </p>
           </div>
         )}
